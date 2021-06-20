@@ -821,14 +821,23 @@
             '<!@pymod_do_main(GN-scraper "<(V8_ROOT)/BUILD.gn"  "\\"v8_base_without_compiler.*?v8_current_cpu == \\"x64.*?sources \\+= ")',
           ],
           'conditions': [
-            ['OS=="linux" or OS=="mac" or OS=="ios" or OS=="freebsd"', {
-              'sources': [
-                '<!@pymod_do_main(GN-scraper "<(V8_ROOT)/BUILD.gn"  "\\"v8_base_without_compiler.*?is_linux.*?sources \\+= ")',
-              ],
-            }],
             ['OS=="win"', {
               'sources': [
                 '<!@pymod_do_main(GN-scraper "<(V8_ROOT)/BUILD.gn"  "\\"v8_base_without_compiler.*?is_win.*?sources \\+= ")',
+              ],
+            }],
+            ['v8_enable_webassembly==1', {
+              'conditions': [
+                ['OS=="linux" or OS=="mac" or OS=="ios" or OS=="freebsd"', {
+                  'sources': [
+                    '<!@pymod_do_main(GN-scraper "<(V8_ROOT)/BUILD.gn"  "\\"v8_base_without_compiler.*?v8_enable_webassembly.*?is_linux.*?sources \\+= ")',
+                  ],
+                }],
+                ['OS=="win"', {
+                  'sources': [
+                    '<!@pymod_do_main(GN-scraper "<(V8_ROOT)/BUILD.gn"  "\\"v8_base_without_compiler.*?v8_enable_webassembly.*?is_win.*?sources \\+= ")',
+                  ],
+                }],
               ],
             }],
           ],
