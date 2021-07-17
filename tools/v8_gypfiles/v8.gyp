@@ -1602,6 +1602,16 @@
         'sources': [
           '<!@pymod_do_main(GN-scraper "<(V8_ROOT)/BUILD.gn"  "v8_source_set.\\"v8_bigint.*?sources = ")',
         ],
+        'conditions': [
+          ['v8_advanced_bigint_algorithms==1', {
+            'sources': [
+              '<!@pymod_do_main(GN-scraper "<(V8_ROOT)/BUILD.gn"  "v8_source_set.\\"v8_bigint.*?v8_advanced_bigint_algorithms.*?sources \\+= ")',
+            ],
+            'defines': [
+              'V8_ADVANCED_BIGINT_ALGORITHMS',
+            ],
+          }],
+        ],
       },
     },  # v8_bigint
     {

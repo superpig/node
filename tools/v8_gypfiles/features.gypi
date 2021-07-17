@@ -242,6 +242,10 @@
     # will not be available, and embedder APIs to generate WebAssembly modules
     # will fail.
     'v8_enable_webassembly%': 1,
+
+    # Enable advanced BigInt algorithms, costing about 10-30 KB binary size
+    # depending on platform.
+    'v8_advanced_bigint_algorithms%': 1
   },
 
   'target_defaults': {
