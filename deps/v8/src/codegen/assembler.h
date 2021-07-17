@@ -202,6 +202,8 @@ class AssemblerBuffer {
   // destructed), but not written.
   virtual std::unique_ptr<AssemblerBuffer> Grow(int new_size)
       V8_WARN_UNUSED_RESULT = 0;
+  virtual bool IsOnHeap() const { return false; }
+  virtual MaybeHandle<Code> code() const { return MaybeHandle<Code>(); }
 };
 
 // Allocate an AssemblerBuffer which uses an existing buffer. This buffer cannot
@@ -214,6 +216,10 @@ std::unique_ptr<AssemblerBuffer> ExternalAssemblerBuffer(void* buffer,
 V8_EXPORT_PRIVATE
 std::unique_ptr<AssemblerBuffer> NewAssemblerBuffer(int size);
 
+V8_EXPORT_PRIVATE
+std::unique_ptr<AssemblerBuffer> NewOnHeapAssemblerBuffer(Isolate* isolate,
+                                                          int size);
+
 class V8_EXPORT_PRIVATE AssemblerBase : public Malloced {
  public:
   AssemblerBase(const AssemblerOptions& options,
@@ -221,9 +227,6 @@ class V8_EXPORT_PRIVATE AssemblerBase : public Malloced {
   virtual ~AssemblerBase();
 
   const AssemblerOptions& options() const { return options_; }
-
-  bool emit_debug_code() const { return emit_debug_code_; }
-  void set_emit_debug_code(bool value) { emit_debug_code_ = value; }
 
   bool predictable_code_size() const { return predictable_code_size_; }
   void set_predictable_code_size(bool value) { predictable_code_size_ = value; }
@@ -278,9 +281,25 @@ class V8_EXPORT_PRIVATE AssemblerBase : public Malloced {
 #endif
   }
 
+  bool IsOnHeap() const { return buffer_->IsOnHeap(); }
+
+  MaybeHandle<Code> code() const {
+    DCHECK(IsOnHeap());
+    return buffer_->code();
+  }
+
   byte* buffer_start() const { return buffer_->start(); }
   int buffer_size() const { return buffer_->size(); }
   int instruction_size() const { return pc_offset(); }
+
+  std::unique_ptr<AssemblerBuffer> ReleaseBuffer() {
+    std::unique_ptr<AssemblerBuffer> buffer = std::move(buffer_);
+    DCHECK_NULL(buffer_);
+    // Reset fields to prevent accidental further modifications of the buffer.
+    buffer_start_ = nullptr;
+    pc_ = nullptr;
+    return buffer;
+  }
 
   // This function is called when code generation is aborted, so that
   // the assembler could clean up internal data structures.
@@ -291,11 +310,47 @@ class V8_EXPORT_PRIVATE AssemblerBase : public Malloced {
 
   // Record an inline code comment that can be used by a disassembler.
   // Use --code-comments to enable.
-  void RecordComment(const char* msg) {
+  V8_INLINE void RecordComment(const char* comment) {
+    // Set explicit dependency on --code-comments for dead-code elimination in
+    // release builds.
+    if (!FLAG_code_comments) return;
     if (options().emit_code_comments) {
-      code_comments_writer_.Add(pc_offset(), std::string(msg));
+      code_comments_writer_.Add(pc_offset(), std::string(comment));
     }
   }
+
+  V8_INLINE void RecordComment(std::string comment) {
+    // Set explicit dependency on --code-comments for dead-code elimination in
+    // release builds.
+    if (!FLAG_code_comments) return;
+    if (options().emit_code_comments) {
+      code_comments_writer_.Add(pc_offset(), std::move(comment));
+    }
+  }
+
+#ifdef V8_CODE_COMMENTS
+  class CodeComment {
+   public:
+    explicit CodeComment(Assembler* assembler, const std::string& comment)
+        : assembler_(assembler) {
+      if (FLAG_code_comments) Open(comment);
+    }
+    ~CodeComment() {
+      if (FLAG_code_comments) Close();
+    }
+    static const int kIndentWidth = 2;
+
+   private:
+    int depth() const;
+    void Open(const std::string& comment);
+    void Close();
+    Assembler* assembler_;
+  };
+#else  // V8_CODE_COMMENTS
+  class CodeComment {
+    explicit CodeComment(Assembler* assembler, std::string comment) {}
+  };
+#endif
 
   // The minimum buffer size. Should be at least two times the platform-specific
   // {Assembler::kGap}.
@@ -346,13 +401,20 @@ class V8_EXPORT_PRIVATE AssemblerBase : public Malloced {
     DCHECK(!RelocInfo::IsNone(rmode));
     if (options().disable_reloc_info_for_patching) return false;
     if (RelocInfo::IsOnlyForSerializer(rmode) &&
-        !options().record_reloc_info_for_serialization && !emit_debug_code()) {
+        !options().record_reloc_info_for_serialization && !FLAG_debug_code) {
       return false;
     }
+#ifndef ENABLE_DISASSEMBLER
+    if (RelocInfo::IsLiteralConstant(rmode)) return false;
+#endif
     return true;
   }
 
   CodeCommentsWriter code_comments_writer_;
+
+  // Relocation information when code allocated directly on heap.
+  std::vector<std::pair<uint32_t, Address>> saved_handles_for_raw_object_ptr_;
+  std::vector<std::pair<uint32_t, uint32_t>> saved_offsets_for_runtime_entries_;
 
  private:
   // Before we copy code into the code space, we sometimes cannot encode
@@ -378,7 +440,6 @@ class V8_EXPORT_PRIVATE AssemblerBase : public Malloced {
 
   const AssemblerOptions options_;
   uint64_t enabled_cpu_features_;
-  bool emit_debug_code_;
   bool predictable_code_size_;
 
   // Indicates whether the constant pool can be accessed, which is only possible
@@ -387,23 +448,13 @@ class V8_EXPORT_PRIVATE AssemblerBase : public Malloced {
 
   JumpOptimizationInfo* jump_optimization_info_;
 
+#ifdef V8_CODE_COMMENTS
+  int comment_depth_ = 0;
+#endif
+
   // Constant pool.
   friend class FrameAndConstantPoolScope;
   friend class ConstantPoolUnavailableScope;
-};
-
-// Avoids emitting debug code during the lifetime of this scope object.
-class V8_NODISCARD DontEmitDebugCodeScope {
- public:
-  explicit DontEmitDebugCodeScope(AssemblerBase* assembler)
-      : assembler_(assembler), old_value_(assembler->emit_debug_code()) {
-    assembler_->set_emit_debug_code(false);
-  }
-  ~DontEmitDebugCodeScope() { assembler_->set_emit_debug_code(old_value_); }
-
- private:
-  AssemblerBase* assembler_;
-  bool old_value_;
 };
 
 // Enable a specified feature within a scope.
@@ -425,11 +476,20 @@ class V8_EXPORT_PRIVATE V8_NODISCARD CpuFeatureScope {
 #else
   CpuFeatureScope(AssemblerBase* assembler, CpuFeature f,
                   CheckPolicy check = kCheckSupported) {}
-  ~CpuFeatureScope() {  // NOLINT (modernize-use-equals-default)
+  ~CpuFeatureScope() {
     // Define a destructor to avoid unused variable warnings.
   }
 #endif
 };
+
+#ifdef V8_CODE_COMMENTS
+#define ASM_CODE_COMMENT(asm) ASM_CODE_COMMENT_STRING(asm, __func__)
+#define ASM_CODE_COMMENT_STRING(asm, comment) \
+  AssemblerBase::CodeComment asm_code_comment(asm, comment)
+#else
+#define ASM_CODE_COMMENT(asm)
+#define ASM_CODE_COMMENT_STRING(asm, ...)
+#endif
 
 }  // namespace internal
 }  // namespace v8

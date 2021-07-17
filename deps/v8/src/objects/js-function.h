@@ -24,6 +24,9 @@ class JSFunctionOrBoundFunction
     : public TorqueGeneratedJSFunctionOrBoundFunction<JSFunctionOrBoundFunction,
                                                       JSObject> {
  public:
+  static const int kLengthDescriptorIndex = 0;
+  static const int kNameDescriptorIndex = 1;
+
   STATIC_ASSERT(kHeaderSize == JSObject::kHeaderSize);
   TQ_OBJECT_CONSTRUCTORS(JSFunctionOrBoundFunction)
 };
@@ -37,8 +40,6 @@ class JSBoundFunction
                                      Handle<JSBoundFunction> function);
   static Maybe<int> GetLength(Isolate* isolate,
                               Handle<JSBoundFunction> function);
-  static MaybeHandle<NativeContext> GetFunctionRealm(
-      Handle<JSBoundFunction> function);
 
   // Dispatched behavior.
   DECL_PRINTER(JSBoundFunction)
@@ -55,14 +56,11 @@ class JSBoundFunction
 class JSFunction : public JSFunctionOrBoundFunction {
  public:
   // [prototype_or_initial_map]:
-  DECL_ACCESSORS(prototype_or_initial_map, HeapObject)
+  DECL_RELEASE_ACQUIRE_ACCESSORS(prototype_or_initial_map, HeapObject)
 
   // [shared]: The information about the function that
   // can be shared by instances.
   DECL_ACCESSORS(shared, SharedFunctionInfo)
-
-  static const int kLengthDescriptorIndex = 0;
-  static const int kNameDescriptorIndex = 1;
 
   // Fast binding requires length and name accessors.
   static const int kMinDescriptorsForFastBind = 2;
@@ -77,7 +75,6 @@ class JSFunction : public JSFunctionOrBoundFunction {
   inline int length();
 
   static Handle<Object> GetName(Isolate* isolate, Handle<JSFunction> function);
-  static Handle<NativeContext> GetFunctionRealm(Handle<JSFunction> function);
 
   // [code]: The generated code object for this function.  Executed
   // when the function is invoked, e.g. foo() or new foo(). See
@@ -87,14 +84,16 @@ class JSFunction : public JSFunctionOrBoundFunction {
   // optimized code object, or when reading from the background thread.
   // Storing a builtin doesn't require release semantics because these objects
   // are fully initialized.
-  inline Code code() const;
-  inline void set_code(Code code);
+  DECL_ACCESSORS(code, Code)
   DECL_RELEASE_ACQUIRE_ACCESSORS(code, Code)
+
+  // Returns the address of the function code's instruction start.
+  inline Address code_entry_point() const;
 
   // Get the abstract code associated with the function, which will either be
   // a Code object or a BytecodeArray.
-  template <typename LocalIsolate>
-  inline AbstractCode abstract_code(LocalIsolate* isolate);
+  template <typename IsolateT>
+  inline AbstractCode abstract_code(IsolateT* isolate);
 
   // The predicates for querying code kinds related to this function have
   // specific terminology:
@@ -122,7 +121,6 @@ class JSFunction : public JSFunctionOrBoundFunction {
   CodeKind GetActiveTier() const;
   V8_EXPORT_PRIVATE bool ActiveTierIsIgnition() const;
   bool ActiveTierIsTurbofan() const;
-  bool ActiveTierIsNCI() const;
   bool ActiveTierIsBaseline() const;
   bool ActiveTierIsIgnitionOrBaseline() const;
   bool ActiveTierIsMidtierTurboprop() const;
@@ -238,6 +236,11 @@ class JSFunction : public JSFunctionOrBoundFunction {
       Isolate* isolate, Handle<JSFunction> constructor,
       Handle<JSReceiver> new_target);
 
+  // Like GetDerivedMap, but returns a map with a RAB / GSAB ElementsKind.
+  static V8_WARN_UNUSED_RESULT Handle<Map> GetDerivedRabGsabMap(
+      Isolate* isolate, Handle<JSFunction> constructor,
+      Handle<JSReceiver> new_target);
+
   // Get and set the prototype property on a JSFunction. If the
   // function has an initial map the prototype is set on the initial
   // map. Otherwise, the prototype is put in the initial map field
@@ -309,6 +312,9 @@ class JSFunction : public JSFunctionOrBoundFunction {
       FieldOffsets::kPrototypeOrInitialMapOffset;
 
  private:
+  DECL_ACCESSORS(raw_code, CodeT)
+  DECL_RELEASE_ACQUIRE_ACCESSORS(raw_code, CodeT)
+
   // JSFunction doesn't have a fixed header size:
   // Hide JSFunctionOrBoundFunction::kHeaderSize to avoid confusion.
   static const int kHeaderSize;

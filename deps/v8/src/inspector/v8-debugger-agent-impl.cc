@@ -271,7 +271,6 @@ String16 scopeType(v8::debug::ScopeIterator::ScopeType type) {
       return Scope::TypeEnum::WasmExpressionStack;
   }
   UNREACHABLE();
-  return String16();
 }
 
 Response buildScopes(v8::Isolate* isolate, v8::debug::ScopeIterator* iterator,
@@ -579,7 +578,8 @@ Response V8DebuggerAgentImpl::setBreakpointByUrl(
     std::unique_ptr<protocol::Debugger::Location> location = setBreakpointImpl(
         breakpointId, script.first, condition, lineNumber, columnNumber);
     if (location && type != BreakpointType::kByUrlRegex) {
-      hint = breakpointHint(*script.second, lineNumber, columnNumber);
+      hint = breakpointHint(*script.second, location->getLineNumber(),
+                            location->getColumnNumber(columnNumber));
     }
     if (location) (*locations)->emplace_back(std::move(location));
   }
@@ -1042,23 +1042,7 @@ Response V8DebuggerAgentImpl::restartFrame(
     std::unique_ptr<Array<CallFrame>>* newCallFrames,
     Maybe<protocol::Runtime::StackTrace>* asyncStackTrace,
     Maybe<protocol::Runtime::StackTraceId>* asyncStackTraceId) {
-  if (!isPaused()) return Response::ServerError(kDebuggerNotPaused);
-  InjectedScript::CallFrameScope scope(m_session, callFrameId);
-  Response response = scope.initialize();
-  if (!response.IsSuccess()) return response;
-  int frameOrdinal = static_cast<int>(scope.frameOrdinal());
-  auto it = v8::debug::StackTraceIterator::Create(m_isolate, frameOrdinal);
-  if (it->Done()) {
-    return Response::ServerError("Could not find call frame with given id");
-  }
-  if (!it->Restart()) {
-    return Response::InternalError();
-  }
-  response = currentCallFrames(newCallFrames);
-  if (!response.IsSuccess()) return response;
-  *asyncStackTrace = currentAsyncStackTrace();
-  *asyncStackTraceId = currentExternalStackTrace();
-  return Response::Success();
+  return Response::ServerError("Frame restarting not supported");
 }
 
 Response V8DebuggerAgentImpl::getScriptSource(
@@ -1928,6 +1912,17 @@ void V8DebuggerAgentImpl::ScriptCollected(const V8DebuggerScript* script) {
     m_scripts.erase(scriptId);
     m_cachedScriptIds.pop_front();
   }
+}
+
+std::vector<v8::debug::BreakpointId>
+V8DebuggerAgentImpl::instrumentationBreakpointIdsMatching(
+    const std::vector<v8::debug::BreakpointId>& ids) {
+  std::vector<v8::debug::BreakpointId> instrumentationBreakpointIds;
+  for (const v8::debug::BreakpointId& id : ids) {
+    if (m_breakpointsOnScriptRun.count(id) > 0)
+      instrumentationBreakpointIds.push_back(id);
+  }
+  return instrumentationBreakpointIds;
 }
 
 Response V8DebuggerAgentImpl::processSkipList(

@@ -74,8 +74,6 @@ static v8::CodeEventType GetCodeEventTypeForTag(
   }
   // The execution should never pass here
   UNREACHABLE();
-  // NOTE(mmarchini): Workaround to fix a compiler failure on GCC 4.9
-  return v8::CodeEventType::kUnknownType;
 }
 #define CALL_CODE_EVENT_HANDLER(Call) \
   if (listener_) {                    \
@@ -169,7 +167,7 @@ class CodeEventLogger::NameBuffer {
   void AppendInt(int n) {
     int space = kUtf8BufferSize - utf8_pos_;
     if (space <= 0) return;
-    Vector<char> buffer(utf8_buffer_ + utf8_pos_, space);
+    base::Vector<char> buffer(utf8_buffer_ + utf8_pos_, space);
     int size = SNPrintF(buffer, "%d", n);
     if (size > 0 && utf8_pos_ + size <= kUtf8BufferSize) {
       utf8_pos_ += size;
@@ -179,7 +177,7 @@ class CodeEventLogger::NameBuffer {
   void AppendHex(uint32_t n) {
     int space = kUtf8BufferSize - utf8_pos_;
     if (space <= 0) return;
-    Vector<char> buffer(utf8_buffer_ + utf8_pos_, space);
+    base::Vector<char> buffer(utf8_buffer_ + utf8_pos_, space);
     int size = SNPrintF(buffer, "%x", n);
     if (size > 0 && utf8_pos_ + size <= kUtf8BufferSize) {
       utf8_pos_ += size;
@@ -318,7 +316,7 @@ PerfBasicLogger::PerfBasicLogger(Isolate* isolate)
     : CodeEventLogger(isolate), perf_output_handle_(nullptr) {
   // Open the perf JIT dump file.
   int bufferSize = sizeof(kFilenameFormatString) + kFilenameBufferPadding;
-  ScopedVector<char> perf_dump_name(bufferSize);
+  base::ScopedVector<char> perf_dump_name(bufferSize);
   int size = SNPrintF(perf_dump_name, kFilenameFormatString,
                       base::OS::GetCurrentProcessId());
   CHECK_NE(size, -1);
@@ -588,7 +586,7 @@ LowLevelLogger::LowLevelLogger(Isolate* isolate, const char* name)
     : CodeEventLogger(isolate), ll_output_handle_(nullptr) {
   // Open the low-level log file.
   size_t len = strlen(name);
-  ScopedVector<char> ll_name(static_cast<int>(len + sizeof(kLogExt)));
+  base::ScopedVector<char> ll_name(static_cast<int>(len + sizeof(kLogExt)));
   MemCopy(ll_name.begin(), name, len);
   MemCopy(ll_name.begin() + len, kLogExt, sizeof(kLogExt));
   ll_output_handle_ =
@@ -1031,7 +1029,7 @@ Logger::~Logger() = default;
 const LogSeparator Logger::kNext = LogSeparator::kSeparator;
 
 int64_t Logger::Time() {
-  if (V8_UNLIKELY(FLAG_verify_predictable)) {
+  if (FLAG_verify_predictable) {
     return isolate_->heap()->MonotonicallyIncreasingTimeInMs() * 1000;
   }
   return timer_.Elapsed().InMicroseconds();
@@ -1198,10 +1196,10 @@ void Logger::DeleteEvent(const char* name, void* object) {
 
 namespace {
 
-void AppendCodeCreateHeader(
-    Log::MessageBuilder& msg,  // NOLINT(runtime/references)
-    CodeEventListener::LogEventsAndTags tag, CodeKind kind, uint8_t* address,
-    int size, uint64_t time) {
+void AppendCodeCreateHeader(Log::MessageBuilder& msg,
+                            CodeEventListener::LogEventsAndTags tag,
+                            CodeKind kind, uint8_t* address, int size,
+                            uint64_t time) {
   msg << kLogEventsNames[CodeEventListener::CODE_CREATION_EVENT]
       << Logger::kNext << kLogEventsNames[tag] << Logger::kNext
       << static_cast<int>(kind) << Logger::kNext << time << Logger::kNext
@@ -1209,9 +1207,9 @@ void AppendCodeCreateHeader(
       << Logger::kNext;
 }
 
-void AppendCodeCreateHeader(
-    Log::MessageBuilder& msg,  // NOLINT(runtime/references)
-    CodeEventListener::LogEventsAndTags tag, AbstractCode code, uint64_t time) {
+void AppendCodeCreateHeader(Log::MessageBuilder& msg,
+                            CodeEventListener::LogEventsAndTags tag,
+                            AbstractCode code, uint64_t time) {
   AppendCodeCreateHeader(msg, tag, code.kind(),
                          reinterpret_cast<uint8_t*>(code.InstructionStart()),
                          code.InstructionSize(), time);
@@ -1358,8 +1356,8 @@ void Logger::CodeCreateEvent(LogEventsAndTags tag, Handle<AbstractCode> code,
                              Handle<Name> script_name) {
   if (!is_listening_to_code_events()) return;
   if (!FLAG_log_code) return;
-  if (*code == AbstractCode::cast(
-                   isolate_->builtins()->builtin(Builtins::kCompileLazy))) {
+  if (*code ==
+      AbstractCode::cast(isolate_->builtins()->code(Builtin::kCompileLazy))) {
     return;
   }
   {
@@ -1522,9 +1520,8 @@ void Logger::CodeDependencyChangeEvent(Handle<Code> code,
 
 namespace {
 
-void CodeLinePosEvent(
-    JitLogger& jit_logger, Address code_start,
-    SourcePositionTableIterator& iter) {  // NOLINT(runtime/references)
+void CodeLinePosEvent(JitLogger& jit_logger, Address code_start,
+                      SourcePositionTableIterator& iter) {
   void* jit_handler_data = jit_logger.StartCodePosInfoEvent();
   for (; !iter.done(); iter.Advance()) {
     if (iter.is_statement()) {
@@ -1549,7 +1546,7 @@ void Logger::CodeLinePosInfoRecordEvent(Address code_start,
 }
 
 void Logger::CodeLinePosInfoRecordEvent(
-    Address code_start, Vector<const byte> source_position_table) {
+    Address code_start, base::Vector<const byte> source_position_table) {
   if (!jit_logger_) return;
   SourcePositionTableIterator iter(source_position_table);
   CodeLinePosEvent(*jit_logger_, code_start, iter);
@@ -1597,10 +1594,9 @@ void Logger::SuspectReadEvent(Name name, Object obj) {
 }
 
 namespace {
-void AppendFunctionMessage(
-    Log::MessageBuilder& msg,  // NOLINT(runtime/references)
-    const char* reason, int script_id, double time_delta, int start_position,
-    int end_position, uint64_t time) {
+void AppendFunctionMessage(Log::MessageBuilder& msg, const char* reason,
+                           int script_id, double time_delta, int start_position,
+                           int end_position, uint64_t time) {
   msg << "function" << Logger::kNext << reason << Logger::kNext << script_id
       << Logger::kNext << start_position << Logger::kNext << end_position
       << Logger::kNext;
@@ -1728,12 +1724,14 @@ bool Logger::EnsureLogScriptSource(Script script) {
 }
 
 void Logger::RuntimeCallTimerEvent() {
+#ifdef V8_RUNTIME_CALL_STATS
   RuntimeCallStats* stats = isolate_->counters()->runtime_call_stats();
   RuntimeCallCounter* counter = stats->current_counter();
   if (counter == nullptr) return;
   MSG_BUILDER();
   msg << "active-runtime-timer" << kNext << counter->name();
   msg.WriteToLogFile();
+#endif  // V8_RUNTIME_CALL_STATS
 }
 
 void Logger::TickEvent(TickSample* sample, bool overflow) {
@@ -2051,9 +2049,7 @@ void Logger::SetCodeEventHandler(uint32_t options,
 
   if (event_handler) {
 #if V8_ENABLE_WEBASSEMBLY
-    if (isolate_->wasm_engine() != nullptr) {
-      isolate_->wasm_engine()->EnableCodeLogging(isolate_);
-    }
+    wasm::GetWasmEngine()->EnableCodeLogging(isolate_);
 #endif  // V8_ENABLE_WEBASSEMBLY
     jit_logger_ = std::make_unique<JitLogger>(isolate_, event_handler);
     AddCodeEventListener(jit_logger_.get());
@@ -2127,7 +2123,6 @@ void ExistingCodeLogger::LogCodeObject(Object object) {
     case CodeKind::INTERPRETED_FUNCTION:
     case CodeKind::TURBOFAN:
     case CodeKind::BASELINE:
-    case CodeKind::NATIVE_CONTEXT_INDEPENDENT:
     case CodeKind::TURBOPROP:
       return;  // We log this later using LogCompiledFunctions.
     case CodeKind::BYTECODE_HANDLER:
@@ -2147,7 +2142,7 @@ void ExistingCodeLogger::LogCodeObject(Object object) {
         return;
       }
       description =
-          isolate_->builtins()->name(abstract_code->GetCode().builtin_index());
+          isolate_->builtins()->name(abstract_code->GetCode().builtin_id());
       tag = CodeEventListener::BUILTIN_TAG;
       break;
     case CodeKind::WASM_FUNCTION:
@@ -2273,9 +2268,10 @@ void ExistingCodeLogger::LogExistingFunction(
       CALL_CODE_EVENT_HANDLER(CallbackEvent(fun_name, entry_point))
 
       // Fast API function.
-      Address c_function = v8::ToCData<Address>(fun_data->GetCFunction());
-      if (c_function != kNullAddress) {
-        CALL_CODE_EVENT_HANDLER(CallbackEvent(fun_name, c_function))
+      int c_functions_count = fun_data->GetCFunctionsCount();
+      for (int i = 0; i < c_functions_count; i++) {
+        CALL_CODE_EVENT_HANDLER(
+            CallbackEvent(fun_name, fun_data->GetCFunction(i)))
       }
     }
   }

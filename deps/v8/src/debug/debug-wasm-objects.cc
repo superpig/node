@@ -6,6 +6,7 @@
 
 #include "src/api/api-inl.h"
 #include "src/api/api-natives.h"
+#include "src/base/strings.h"
 #include "src/debug/debug-wasm-objects-inl.h"
 #include "src/execution/frames-inl.h"
 #include "src/objects/property-descriptor.h"
@@ -31,7 +32,7 @@ Handle<String> GetNameOrDefault(Isolate* isolate,
                .ToHandleChecked();
     return isolate->factory()->InternalizeString(name);
   }
-  EmbeddedVector<char, 64> value;
+  base::EmbeddedVector<char, 64> value;
   int len = SNPrintF(value, "%s%u", default_name_prefix, index);
   return isolate->factory()->InternalizeString(value.SubVector(0, len));
 }
@@ -45,8 +46,8 @@ MaybeHandle<String> GetNameFromImportsAndExportsOrNull(
 
   auto import_name_ref = debug_info->GetImportName(kind, index);
   if (!import_name_ref.first.is_empty()) {
-    ScopedVector<char> name(import_name_ref.first.length() + 1 +
-                            import_name_ref.second.length());
+    base::ScopedVector<char> name(import_name_ref.first.length() + 1 +
+                                  import_name_ref.second.length());
     auto name_begin = &name.first(), name_end = name_begin;
     auto module_name = wire_bytes.GetNameOrNull(import_name_ref.first);
     name_end = std::copy(module_name.begin(), module_name.end(), name_end);
@@ -54,7 +55,7 @@ MaybeHandle<String> GetNameFromImportsAndExportsOrNull(
     auto field_name = wire_bytes.GetNameOrNull(import_name_ref.second);
     name_end = std::copy(field_name.begin(), field_name.end(), name_end);
     return isolate->factory()->NewStringFromUtf8(
-        VectorOf(name_begin, name_end - name_begin));
+        base::VectorOf(name_begin, name_end - name_begin));
   }
 
   auto export_name_ref = debug_info->GetExportName(kind, index);
@@ -323,15 +324,7 @@ struct FunctionsProxy : NamedDebugProxy<FunctionsProxy, kFunctionsProxy> {
   static Handle<String> GetName(Isolate* isolate,
                                 Handle<WasmInstanceObject> instance,
                                 uint32_t index) {
-    Handle<WasmModuleObject> module_object(instance->module_object(), isolate);
-    MaybeHandle<String> name =
-        WasmModuleObject::GetFunctionNameOrNull(isolate, module_object, index);
-    if (name.is_null()) {
-      name = GetNameFromImportsAndExportsOrNull(
-          isolate, instance, wasm::ImportExportKindCode::kExternalFunction,
-          index);
-    }
-    return GetNameOrDefault(isolate, name, "$func", index);
+    return GetWasmFunctionDebugName(isolate, instance, index);
   }
 };
 
@@ -766,7 +759,7 @@ class DebugWasmScopeIterator final : public debug::ScopeIterator {
 Handle<String> WasmSimd128ToString(Isolate* isolate, wasm::Simd128 s128) {
   // We use the canonical format as described in:
   // https://github.com/WebAssembly/simd/blob/master/proposals/simd/TextSIMD.md
-  EmbeddedVector<char, 50> buffer;
+  base::EmbeddedVector<char, 50> buffer;
   auto i32x4 = s128.to_i32x4();
   SNPrintF(buffer, "i32x4 0x%08X 0x%08X 0x%08X 0x%08X", i32x4.val[0],
            i32x4.val[1], i32x4.val[2], i32x4.val[3]);
@@ -775,8 +768,12 @@ Handle<String> WasmSimd128ToString(Isolate* isolate, wasm::Simd128 s128) {
 
 Handle<String> GetRefTypeName(Isolate* isolate, wasm::ValueType type,
                               wasm::NativeModule* module) {
-  const char* nullable = type.kind() == wasm::kOptRef ? " null" : "";
-  EmbeddedVector<char, 64> type_name;
+  bool is_nullable = type.kind() == wasm::kOptRef;
+  const char* null_str = is_nullable ? " null" : "";
+  // This length only needs to be enough for generated names like
+  // "(ref null $type12345)". For names coming from the name section,
+  // we'll dynamically allocate an appropriately sized vector.
+  base::EmbeddedVector<char, 32> type_name;
   size_t len;
   if (type.heap_type().is_generic()) {
     const char* generic_name = "";
@@ -803,23 +800,33 @@ Handle<String> GetRefTypeName(Isolate* isolate, wasm::ValueType type,
       default:
         UNREACHABLE();
     }
-    len = SNPrintF(type_name, "(ref%s %s)", nullable, generic_name);
+    len = SNPrintF(type_name, "(ref%s %s)", null_str, generic_name);
   } else {
     int type_index = type.ref_index();
     wasm::ModuleWireBytes module_wire_bytes(module->wire_bytes());
-    Vector<const char> name_vec = module_wire_bytes.GetNameOrNull(
+    base::Vector<const char> name_vec = module_wire_bytes.GetNameOrNull(
         module->GetDebugInfo()->GetTypeName(type_index));
     if (name_vec.empty()) {
-      len = SNPrintF(type_name, "(ref%s $type%u)", nullable, type_index);
+      len = SNPrintF(type_name, "(ref%s $type%u)", null_str, type_index);
     } else {
-      len = SNPrintF(type_name, "(ref%s $", nullable);
-      Vector<char> suffix = type_name.SubVector(len, type_name.size());
-      StrNCpy(suffix, name_vec.data(), name_vec.size());
-      len += std::min(suffix.size(), name_vec.size());
-      if (len < type_name.size()) {
-        type_name[len] = ')';
-        len++;
-      }
+      size_t required_length =
+          name_vec.size() +       // length of provided name
+          7 +                     // length of "(ref $)"
+          (is_nullable ? 5 : 0);  // length of " null" (optional)
+      base::Vector<char> long_type_name =
+          base::Vector<char>::New(required_length);
+      len = SNPrintF(long_type_name, "(ref%s $", null_str);
+      base::Vector<char> suffix =
+          long_type_name.SubVector(len, long_type_name.size());
+      // StrNCpy requires that there is room for an assumed trailing \0...
+      DCHECK_EQ(suffix.size(), name_vec.size() + 1);
+      base::StrNCpy(suffix, name_vec.data(), name_vec.size());
+      // ...but we actually write ')' into that byte.
+      long_type_name[required_length - 1] = ')';
+      Handle<String> result =
+          isolate->factory()->InternalizeString(long_type_name);
+      long_type_name.Dispose();
+      return result;
     }
   }
   return isolate->factory()->InternalizeString(type_name.SubVector(0, len));
@@ -837,17 +844,19 @@ Handle<WasmValueObject> WasmValueObject::New(Isolate* isolate,
         WASM_VALUE_OBJECT_TYPE, WasmValueObject::kSize,
         TERMINAL_FAST_ELEMENTS_KIND, 2);
     Map::EnsureDescriptorSlack(isolate, map, 2);
+    map->SetConstructor(*isolate->object_function());
     {  // type
       Descriptor d = Descriptor::DataField(
           isolate,
-          isolate->factory()->InternalizeString(StaticCharVector("type")),
+          isolate->factory()->InternalizeString(base::StaticCharVector("type")),
           WasmValueObject::kTypeIndex, FROZEN, Representation::Tagged());
       map->AppendDescriptor(isolate, &d);
     }
     {  // value
       Descriptor d = Descriptor::DataField(
           isolate,
-          isolate->factory()->InternalizeString(StaticCharVector("value")),
+          isolate->factory()->InternalizeString(
+              base::StaticCharVector("value")),
           WasmValueObject::kValueIndex, FROZEN, Representation::Tagged());
       map->AppendDescriptor(isolate, &d);
     }
@@ -900,7 +909,7 @@ struct StructProxy : NamedDebugProxy<StructProxy, kStructProxy, FixedArray> {
         WasmModuleObject::cast(data->get(kModuleIndex)).native_module();
     int struct_type_index = Smi::ToInt(Smi::cast(data->get(kTypeIndexIndex)));
     wasm::ModuleWireBytes module_wire_bytes(native_module->wire_bytes());
-    Vector<const char> name_vec = module_wire_bytes.GetNameOrNull(
+    base::Vector<const char> name_vec = module_wire_bytes.GetNameOrNull(
         native_module->GetDebugInfo()->GetFieldName(struct_type_index, index));
     return GetNameOrDefault(
         isolate,
@@ -965,46 +974,46 @@ Handle<WasmValueObject> WasmValueObject::New(
     case wasm::kI8: {
       // This can't be reached for most "top-level" things, only via nested
       // calls for struct/array fields.
-      t = isolate->factory()->InternalizeString(StaticCharVector("i8"));
+      t = isolate->factory()->InternalizeString(base::StaticCharVector("i8"));
       v = isolate->factory()->NewNumber(value.to_i8_unchecked());
       break;
     }
     case wasm::kI16: {
       // This can't be reached for most "top-level" things, only via nested
       // calls for struct/array fields.
-      t = isolate->factory()->InternalizeString(StaticCharVector("i16"));
+      t = isolate->factory()->InternalizeString(base::StaticCharVector("i16"));
       v = isolate->factory()->NewNumber(value.to_i16_unchecked());
       break;
     }
     case wasm::kI32: {
-      t = isolate->factory()->InternalizeString(StaticCharVector("i32"));
+      t = isolate->factory()->InternalizeString(base::StaticCharVector("i32"));
       v = isolate->factory()->NewNumberFromInt(value.to_i32_unchecked());
       break;
     }
     case wasm::kI64: {
-      t = isolate->factory()->InternalizeString(StaticCharVector("i64"));
+      t = isolate->factory()->InternalizeString(base::StaticCharVector("i64"));
       v = BigInt::FromInt64(isolate, value.to_i64_unchecked());
       break;
     }
     case wasm::kF32: {
-      t = isolate->factory()->InternalizeString(StaticCharVector("f32"));
+      t = isolate->factory()->InternalizeString(base::StaticCharVector("f32"));
       v = isolate->factory()->NewNumber(value.to_f32_unchecked());
       break;
     }
     case wasm::kF64: {
-      t = isolate->factory()->InternalizeString(StaticCharVector("f64"));
+      t = isolate->factory()->InternalizeString(base::StaticCharVector("f64"));
       v = isolate->factory()->NewNumber(value.to_f64_unchecked());
       break;
     }
     case wasm::kS128: {
-      t = isolate->factory()->InternalizeString(StaticCharVector("v128"));
+      t = isolate->factory()->InternalizeString(base::StaticCharVector("v128"));
       v = WasmSimd128ToString(isolate, value.to_s128_unchecked());
       break;
     }
     case wasm::kOptRef:
       if (value.type().is_reference_to(wasm::HeapType::kExtern)) {
         t = isolate->factory()->InternalizeString(
-            StaticCharVector("externref"));
+            base::StaticCharVector("externref"));
         v = value.to_ref();
         break;
       }
@@ -1020,7 +1029,7 @@ Handle<WasmValueObject> WasmValueObject::New(
         v = ref;
       } else {
         // Fail gracefully.
-        EmbeddedVector<char, 64> error;
+        base::EmbeddedVector<char, 64> error;
         int len = SNPrintF(error, "unimplemented object type: %d",
                            HeapObject::cast(*ref).map().instance_type());
         v = isolate->factory()->InternalizeString(error.SubVector(0, len));
@@ -1030,9 +1039,9 @@ Handle<WasmValueObject> WasmValueObject::New(
     case wasm::kRtt:
     case wasm::kRttWithDepth: {
       // TODO(7748): Expose RTTs to DevTools.
-      t = isolate->factory()->InternalizeString(StaticCharVector("rtt"));
+      t = isolate->factory()->InternalizeString(base::StaticCharVector("rtt"));
       v = isolate->factory()->InternalizeString(
-          StaticCharVector("(unimplemented)"));
+          base::StaticCharVector("(unimplemented)"));
       break;
     }
     case wasm::kVoid:
@@ -1050,78 +1059,94 @@ std::unique_ptr<debug::ScopeIterator> GetWasmScopeIterator(WasmFrame* frame) {
   return std::make_unique<DebugWasmScopeIterator>(frame);
 }
 
-Handle<JSArray> GetWasmInstanceObjectInternalProperties(
-    Handle<WasmInstanceObject> instance) {
-  Isolate* isolate = instance->GetIsolate();
-  Handle<FixedArray> result = isolate->factory()->NewFixedArray(2 * 5);
-  int length = 0;
+Handle<String> GetWasmFunctionDebugName(Isolate* isolate,
+                                        Handle<WasmInstanceObject> instance,
+                                        uint32_t func_index) {
+  Handle<WasmModuleObject> module_object(instance->module_object(), isolate);
+  MaybeHandle<String> maybe_name = WasmModuleObject::GetFunctionNameOrNull(
+      isolate, module_object, func_index);
+  if (module_object->is_asm_js()) {
+    // In case of asm.js, we use the names from the function declarations.
+    return maybe_name.ToHandleChecked();
+  }
+  if (maybe_name.is_null()) {
+    maybe_name = GetNameFromImportsAndExportsOrNull(
+        isolate, instance, wasm::ImportExportKindCode::kExternalFunction,
+        func_index);
+  }
+  return GetNameOrDefault(isolate, maybe_name, "$func", func_index);
+}
 
-  Handle<String> module_str =
-      isolate->factory()->NewStringFromAsciiChecked("[[Module]]");
-  Handle<Object> module_obj = handle(instance->module_object(), isolate);
-  result->set(length++, *module_str);
-  result->set(length++, *module_obj);
+Handle<ArrayList> AddWasmInstanceObjectInternalProperties(
+    Isolate* isolate, Handle<ArrayList> result,
+    Handle<WasmInstanceObject> instance) {
+  result = ArrayList::Add(
+      isolate, result,
+      isolate->factory()->NewStringFromAsciiChecked("[[Module]]"),
+      handle(instance->module_object(), isolate));
 
   if (FunctionsProxy::Count(isolate, instance) != 0) {
-    Handle<String> functions_str =
-        isolate->factory()->NewStringFromAsciiChecked("[[Functions]]");
-    Handle<Object> functions_obj =
-        GetOrCreateInstanceProxy<FunctionsProxy>(isolate, instance);
-    result->set(length++, *functions_str);
-    result->set(length++, *functions_obj);
+    result = ArrayList::Add(
+        isolate, result,
+        isolate->factory()->NewStringFromAsciiChecked("[[Functions]]"),
+        GetOrCreateInstanceProxy<FunctionsProxy>(isolate, instance));
   }
 
   if (GlobalsProxy::Count(isolate, instance) != 0) {
-    Handle<String> globals_str =
-        isolate->factory()->NewStringFromAsciiChecked("[[Globals]]");
-    Handle<Object> globals_obj =
-        GetOrCreateInstanceProxy<GlobalsProxy>(isolate, instance);
-    result->set(length++, *globals_str);
-    result->set(length++, *globals_obj);
+    result = ArrayList::Add(
+        isolate, result,
+        isolate->factory()->NewStringFromAsciiChecked("[[Globals]]"),
+        GetOrCreateInstanceProxy<GlobalsProxy>(isolate, instance));
   }
 
   if (MemoriesProxy::Count(isolate, instance) != 0) {
-    Handle<String> memories_str =
-        isolate->factory()->NewStringFromAsciiChecked("[[Memories]]");
-    Handle<Object> memories_obj =
-        GetOrCreateInstanceProxy<MemoriesProxy>(isolate, instance);
-    result->set(length++, *memories_str);
-    result->set(length++, *memories_obj);
+    result = ArrayList::Add(
+        isolate, result,
+        isolate->factory()->NewStringFromAsciiChecked("[[Memories]]"),
+        GetOrCreateInstanceProxy<MemoriesProxy>(isolate, instance));
   }
 
   if (TablesProxy::Count(isolate, instance) != 0) {
-    Handle<String> tables_str =
-        isolate->factory()->NewStringFromAsciiChecked("[[Tables]]");
-    Handle<Object> tables_obj =
-        GetOrCreateInstanceProxy<TablesProxy>(isolate, instance);
-    result->set(length++, *tables_str);
-    result->set(length++, *tables_obj);
+    result = ArrayList::Add(
+        isolate, result,
+        isolate->factory()->NewStringFromAsciiChecked("[[Tables]]"),
+        GetOrCreateInstanceProxy<TablesProxy>(isolate, instance));
   }
 
-  return isolate->factory()->NewJSArrayWithElements(result, PACKED_ELEMENTS,
-                                                    length);
+  return result;
 }
 
-Handle<JSArray> GetWasmModuleObjectInternalProperties(
+Handle<ArrayList> AddWasmModuleObjectInternalProperties(
+    Isolate* isolate, Handle<ArrayList> result,
     Handle<WasmModuleObject> module_object) {
-  Isolate* isolate = module_object->GetIsolate();
-  Handle<FixedArray> result = isolate->factory()->NewFixedArray(2 * 2);
-  int length = 0;
+  result = ArrayList::Add(
+      isolate, result,
+      isolate->factory()->NewStringFromStaticChars("[[Exports]]"),
+      wasm::GetExports(isolate, module_object));
+  result = ArrayList::Add(
+      isolate, result,
+      isolate->factory()->NewStringFromStaticChars("[[Imports]]"),
+      wasm::GetImports(isolate, module_object));
+  return result;
+}
 
-  Handle<String> exports_str =
-      isolate->factory()->NewStringFromStaticChars("[[Exports]]");
-  Handle<JSArray> exports_obj = wasm::GetExports(isolate, module_object);
-  result->set(length++, *exports_str);
-  result->set(length++, *exports_obj);
-
-  Handle<String> imports_str =
-      isolate->factory()->NewStringFromStaticChars("[[Imports]]");
-  Handle<JSArray> imports_obj = wasm::GetImports(isolate, module_object);
-  result->set(length++, *imports_str);
-  result->set(length++, *imports_obj);
-
-  return isolate->factory()->NewJSArrayWithElements(result, PACKED_ELEMENTS,
-                                                    length);
+Handle<ArrayList> AddWasmTableObjectInternalProperties(
+    Isolate* isolate, Handle<ArrayList> result, Handle<WasmTableObject> table) {
+  int length = table->current_length();
+  Handle<FixedArray> entries = isolate->factory()->NewFixedArray(length);
+  for (int i = 0; i < length; ++i) {
+    entries->set(i, *WasmTableObject::Get(isolate, table, i));
+  }
+  Handle<JSArray> final_entries = isolate->factory()->NewJSArrayWithElements(
+      entries, i::PACKED_ELEMENTS, length);
+  JSObject::SetPrototype(final_entries, isolate->factory()->null_value(), false,
+                         kDontThrow)
+      .Check();
+  result = ArrayList::Add(
+      isolate, result,
+      isolate->factory()->NewStringFromStaticChars("[[Entries]]"),
+      final_entries);
+  return result;
 }
 
 }  // namespace internal

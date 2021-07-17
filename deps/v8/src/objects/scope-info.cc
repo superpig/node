@@ -57,9 +57,8 @@ bool ScopeInfo::Equals(ScopeInfo other) const {
 #endif
 
 // static
-template <typename LocalIsolate>
-Handle<ScopeInfo> ScopeInfo::Create(LocalIsolate* isolate, Zone* zone,
-                                    Scope* scope,
+template <typename IsolateT>
+Handle<ScopeInfo> ScopeInfo::Create(IsolateT* isolate, Zone* zone, Scope* scope,
                                     MaybeHandle<ScopeInfo> outer_scope) {
   // Collect variables.
   int context_local_count = 0;
@@ -627,8 +626,8 @@ Handle<ScopeInfo> ScopeInfo::RecreateWithBlockList(
   DCHECK(!original.is_null());
   if (original->HasLocalsBlockList()) return original;
 
-  Handle<ScopeInfo> scope_info =
-      isolate->factory()->NewScopeInfo(original->length() + 1);
+  int length = original->length() + 1;
+  Handle<ScopeInfo> scope_info = isolate->factory()->NewScopeInfo(length);
 
   // Copy the static part first and update the flags to include the
   // blocklist field, so {LocalsBlockListIndex} returns the correct value.
@@ -646,11 +645,10 @@ Handle<ScopeInfo> ScopeInfo::RecreateWithBlockList(
       scope_info->LocalsBlockListIndex() - kVariablePartIndex,
       WriteBarrierMode::UPDATE_WRITE_BARRIER);
   scope_info->set_locals_block_list(*blocklist);
-  scope_info->CopyElements(
-      isolate, scope_info->LocalsBlockListIndex() + 1, *original,
-      scope_info->LocalsBlockListIndex(),
-      scope_info->length() - scope_info->LocalsBlockListIndex() - 1,
-      WriteBarrierMode::UPDATE_WRITE_BARRIER);
+  scope_info->CopyElements(isolate, scope_info->LocalsBlockListIndex() + 1,
+                           *original, scope_info->LocalsBlockListIndex(),
+                           length - scope_info->LocalsBlockListIndex() - 1,
+                           WriteBarrierMode::UPDATE_WRITE_BARRIER);
   return scope_info;
 }
 
@@ -931,15 +929,10 @@ int ScopeInfo::ModuleIndex(String name, VariableMode* mode,
 
 // static
 int ScopeInfo::ContextSlotIndex(ScopeInfo scope_info, String name,
-                                VariableMode* mode,
-                                InitializationFlag* init_flag,
-                                MaybeAssignedFlag* maybe_assigned_flag,
-                                IsStaticFlag* is_static_flag) {
+                                VariableLookupResult* lookup_result) {
   DisallowGarbageCollection no_gc;
   DCHECK(name.IsInternalizedString());
-  DCHECK_NOT_NULL(mode);
-  DCHECK_NOT_NULL(init_flag);
-  DCHECK_NOT_NULL(maybe_assigned_flag);
+  DCHECK_NOT_NULL(lookup_result);
 
   if (scope_info.IsEmpty()) return -1;
 
@@ -948,10 +941,12 @@ int ScopeInfo::ContextSlotIndex(ScopeInfo scope_info, String name,
     if (name != scope_info.context_local_names(var)) {
       continue;
     }
-    *mode = scope_info.ContextLocalMode(var);
-    *is_static_flag = scope_info.ContextLocalIsStaticFlag(var);
-    *init_flag = scope_info.ContextLocalInitFlag(var);
-    *maybe_assigned_flag = scope_info.ContextLocalMaybeAssignedFlag(var);
+    lookup_result->mode = scope_info.ContextLocalMode(var);
+    lookup_result->is_static_flag = scope_info.ContextLocalIsStaticFlag(var);
+    lookup_result->init_flag = scope_info.ContextLocalInitFlag(var);
+    lookup_result->maybe_assigned_flag =
+        scope_info.ContextLocalMaybeAssignedFlag(var);
+    lookup_result->is_repl_mode = scope_info.IsReplModeScope();
     int result = scope_info.ContextHeaderLength() + var;
 
     DCHECK_LT(result, scope_info.ContextLength());
@@ -1075,11 +1070,10 @@ std::ostream& operator<<(std::ostream& os, VariableAllocationInfo var_info) {
       return os << "UNUSED";
   }
   UNREACHABLE();
-  return os;
 }
 
-template <typename LocalIsolate>
-Handle<ModuleRequest> ModuleRequest::New(LocalIsolate* isolate,
+template <typename IsolateT>
+Handle<ModuleRequest> ModuleRequest::New(IsolateT* isolate,
                                          Handle<String> specifier,
                                          Handle<FixedArray> import_assertions,
                                          int position) {
@@ -1098,9 +1092,9 @@ template Handle<ModuleRequest> ModuleRequest::New(
     LocalIsolate* isolate, Handle<String> specifier,
     Handle<FixedArray> import_assertions, int position);
 
-template <typename LocalIsolate>
+template <typename IsolateT>
 Handle<SourceTextModuleInfoEntry> SourceTextModuleInfoEntry::New(
-    LocalIsolate* isolate, Handle<PrimitiveHeapObject> export_name,
+    IsolateT* isolate, Handle<PrimitiveHeapObject> export_name,
     Handle<PrimitiveHeapObject> local_name,
     Handle<PrimitiveHeapObject> import_name, int module_request, int cell_index,
     int beg_pos, int end_pos) {
@@ -1128,12 +1122,13 @@ template Handle<SourceTextModuleInfoEntry> SourceTextModuleInfoEntry::New(
     Handle<PrimitiveHeapObject> import_name, int module_request, int cell_index,
     int beg_pos, int end_pos);
 
-template <typename LocalIsolate>
+template <typename IsolateT>
 Handle<SourceTextModuleInfo> SourceTextModuleInfo::New(
-    LocalIsolate* isolate, Zone* zone, SourceTextModuleDescriptor* descr) {
+    IsolateT* isolate, Zone* zone, SourceTextModuleDescriptor* descr) {
   // Serialize module requests.
   int size = static_cast<int>(descr->module_requests().size());
-  Handle<FixedArray> module_requests = isolate->factory()->NewFixedArray(size);
+  Handle<FixedArray> module_requests =
+      isolate->factory()->NewFixedArray(size, AllocationType::kOld);
   for (const auto& elem : descr->module_requests()) {
     Handle<ModuleRequest> serialized_module_request = elem->Serialize(isolate);
     module_requests->set(elem->index(), *serialized_module_request);
@@ -1141,7 +1136,7 @@ Handle<SourceTextModuleInfo> SourceTextModuleInfo::New(
 
   // Serialize special exports.
   Handle<FixedArray> special_exports = isolate->factory()->NewFixedArray(
-      static_cast<int>(descr->special_exports().size()));
+      static_cast<int>(descr->special_exports().size()), AllocationType::kOld);
   {
     int i = 0;
     for (auto entry : descr->special_exports()) {
@@ -1153,7 +1148,8 @@ Handle<SourceTextModuleInfo> SourceTextModuleInfo::New(
 
   // Serialize namespace imports.
   Handle<FixedArray> namespace_imports = isolate->factory()->NewFixedArray(
-      static_cast<int>(descr->namespace_imports().size()));
+      static_cast<int>(descr->namespace_imports().size()),
+      AllocationType::kOld);
   {
     int i = 0;
     for (auto entry : descr->namespace_imports()) {
@@ -1169,7 +1165,7 @@ Handle<SourceTextModuleInfo> SourceTextModuleInfo::New(
 
   // Serialize regular imports.
   Handle<FixedArray> regular_imports = isolate->factory()->NewFixedArray(
-      static_cast<int>(descr->regular_imports().size()));
+      static_cast<int>(descr->regular_imports().size()), AllocationType::kOld);
   {
     int i = 0;
     for (const auto& elem : descr->regular_imports()) {

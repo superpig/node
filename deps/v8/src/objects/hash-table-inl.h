@@ -130,9 +130,8 @@ Handle<Map> EphemeronHashTable::GetMap(ReadOnlyRoots roots) {
 }
 
 template <typename Derived, typename Shape>
-template <typename LocalIsolate>
-InternalIndex HashTable<Derived, Shape>::FindEntry(LocalIsolate* isolate,
-                                                   Key key) {
+template <typename IsolateT>
+InternalIndex HashTable<Derived, Shape>::FindEntry(IsolateT* isolate, Key key) {
   ReadOnlyRoots roots(isolate);
   return FindEntry(isolate, roots, key, Shape::Hash(roots, key));
 }
@@ -147,7 +146,6 @@ InternalIndex HashTable<Derived, Shape>::FindEntry(PtrComprCageBase cage_base,
   uint32_t count = 1;
   Object undefined = roots.undefined_value();
   Object the_hole = roots.the_hole_value();
-  USE(the_hole);
   // EnsureCapacity will guarantee the hash table is never full.
   for (InternalIndex entry = FirstProbe(hash, capacity);;
        entry = NextProbe(entry, count++, capacity)) {
@@ -195,6 +193,20 @@ template <typename Derived, typename Shape>
 Object HashTable<Derived, Shape>::KeyAt(PtrComprCageBase cage_base,
                                         InternalIndex entry) {
   return get(cage_base, EntryToIndex(entry) + kEntryKeyIndex);
+}
+
+template <typename Derived, typename Shape>
+Object HashTable<Derived, Shape>::KeyAt(InternalIndex entry,
+                                        RelaxedLoadTag tag) {
+  PtrComprCageBase cage_base = GetPtrComprCageBase(*this);
+  return KeyAt(cage_base, entry, tag);
+}
+
+template <typename Derived, typename Shape>
+Object HashTable<Derived, Shape>::KeyAt(PtrComprCageBase cage_base,
+                                        InternalIndex entry,
+                                        RelaxedLoadTag tag) {
+  return get(cage_base, EntryToIndex(entry) + kEntryKeyIndex, tag);
 }
 
 template <typename Derived, typename Shape>

@@ -50,18 +50,23 @@ namespace wasm {
 enum class TestExecutionTier : int8_t {
   kLiftoff = static_cast<int8_t>(ExecutionTier::kLiftoff),
   kTurbofan = static_cast<int8_t>(ExecutionTier::kTurbofan),
-  kInterpreter
+  kInterpreter,
+  kLiftoffForFuzzing
 };
 static_assert(
     std::is_same<std::underlying_type<ExecutionTier>::type,
                  std::underlying_type<TestExecutionTier>::type>::value,
     "enum types match");
 
+enum TestingModuleMemoryType { kMemory32, kMemory64 };
+
 using base::ReadLittleEndianValue;
 using base::WriteLittleEndianValue;
 
 constexpr uint32_t kMaxFunctions = 10;
 constexpr uint32_t kMaxGlobalsSize = 128;
+// Don't execute more than 16k steps.
+constexpr int kMaxNumSteps = 16 * 1024;
 
 using compiler::CallDescriptor;
 using compiler::MachineTypeForC;
@@ -98,7 +103,8 @@ struct ManuallyImportedJSFunction {
 class TestingModuleBuilder {
  public:
   TestingModuleBuilder(Zone*, ManuallyImportedJSFunction*, TestExecutionTier,
-                       RuntimeExceptionSupport, LowerSimd);
+                       RuntimeExceptionSupport, TestingModuleMemoryType,
+                       Isolate* isolate);
   ~TestingModuleBuilder();
 
   void ChangeOriginToAsmjs() { test_module_->origin = kAsmJsSloppyOrigin; }
@@ -187,8 +193,6 @@ class TestingModuleBuilder {
 
   void SetHasSharedMemory() { test_module_->has_shared_memory = true; }
 
-  void SetMemory64() { test_module_->is_memory64 = true; }
-
   enum FunctionType { kImport, kWasm };
   uint32_t AddFunction(const FunctionSig* sig, const char* name,
                        FunctionType type);
@@ -206,11 +210,11 @@ class TestingModuleBuilder {
                                 uint32_t table_size,
                                 ValueType table_type = kWasmFuncRef);
 
-  uint32_t AddBytes(Vector<const byte> bytes);
+  uint32_t AddBytes(base::Vector<const byte> bytes);
 
   uint32_t AddException(const FunctionSig* sig);
 
-  uint32_t AddPassiveDataSegment(Vector<const byte> bytes);
+  uint32_t AddPassiveDataSegment(base::Vector<const byte> bytes);
   uint32_t AddPassiveElementSegment(const std::vector<uint32_t>& entries);
 
   WasmFunction* GetFunctionAt(int index) {
@@ -219,7 +223,6 @@ class TestingModuleBuilder {
 
   WasmInterpreter* interpreter() const { return interpreter_.get(); }
   bool interpret() const { return interpreter_ != nullptr; }
-  LowerSimd lower_simd() const { return lower_simd_; }
   Isolate* isolate() const { return isolate_; }
   Handle<WasmInstanceObject> instance_object() const {
     return instance_object_;
@@ -230,8 +233,6 @@ class TestingModuleBuilder {
   Address globals_start() const {
     return reinterpret_cast<Address>(globals_data_);
   }
-
-  void SetExecutable() { native_module_->SetExecutable(true); }
 
   void SetTieredDown() {
     native_module_->SetTieringState(kTieredDown);
@@ -244,6 +245,8 @@ class TestingModuleBuilder {
   }
 
   CompilationEnv CreateCompilationEnv();
+
+  TestExecutionTier test_execution_tier() const { return execution_tier_; }
 
   ExecutionTier execution_tier() const {
     switch (execution_tier_) {
@@ -260,6 +263,11 @@ class TestingModuleBuilder {
     return runtime_exception_support_;
   }
 
+  void set_max_steps(int n) { max_steps_ = n; }
+  int* max_steps_ptr() { return &max_steps_; }
+  int32_t nondeterminism() { return nondeterminism_; }
+  int32_t* non_determinism_ptr() { return &nondeterminism_; }
+
   void EnableFeature(WasmFeature feature) { enabled_features_.Add(feature); }
 
  private:
@@ -275,7 +283,8 @@ class TestingModuleBuilder {
   Handle<WasmInstanceObject> instance_object_;
   NativeModule* native_module_ = nullptr;
   RuntimeExceptionSupport runtime_exception_support_;
-  LowerSimd lower_simd_;
+  int32_t max_steps_ = kMaxNumSteps;
+  int32_t nondeterminism_ = 0;
 
   // Data segment arrays that are normally allocated on the instance.
   std::vector<byte> data_segment_data_;
@@ -298,14 +307,14 @@ class WasmFunctionWrapper : private compiler::GraphAndBuilders {
   WasmFunctionWrapper(Zone* zone, int num_params);
 
   void Init(CallDescriptor* call_descriptor, MachineType return_type,
-            Vector<MachineType> param_types);
+            base::Vector<MachineType> param_types);
 
   template <typename ReturnType, typename... ParamTypes>
   void Init(CallDescriptor* call_descriptor) {
     std::array<MachineType, sizeof...(ParamTypes)> param_machine_types{
         {MachineTypeForC<ParamTypes>()...}};
-    Vector<MachineType> param_vec(param_machine_types.data(),
-                                  param_machine_types.size());
+    base::Vector<MachineType> param_vec(param_machine_types.data(),
+                                        param_machine_types.size());
     Init(call_descriptor, MachineTypeForC<ReturnType>(), param_vec);
   }
 
@@ -327,7 +336,7 @@ class WasmFunctionWrapper : private compiler::GraphAndBuilders {
                                        common()->HeapConstant(instance));
   }
 
-  Handle<Code> GetWrapperCode();
+  Handle<Code> GetWrapperCode(Isolate* isolate = nullptr);
 
   Signature<MachineType>* signature() const { return signature_; }
 
@@ -388,11 +397,14 @@ class WasmRunnerBase : public InitializedHandleScope {
  public:
   WasmRunnerBase(ManuallyImportedJSFunction* maybe_import,
                  TestExecutionTier execution_tier, int num_params,
-                 RuntimeExceptionSupport runtime_exception_support,
-                 LowerSimd lower_simd)
-      : zone_(&allocator_, ZONE_NAME, kCompressGraphZone),
+                 RuntimeExceptionSupport runtime_exception_support =
+                     kNoRuntimeExceptionSupport,
+                 TestingModuleMemoryType mem_type = kMemory32,
+                 Isolate* isolate = nullptr)
+      : InitializedHandleScope(isolate),
+        zone_(&allocator_, ZONE_NAME, kCompressGraphZone),
         builder_(&zone_, maybe_import, execution_tier,
-                 runtime_exception_support, lower_simd),
+                 runtime_exception_support, mem_type, isolate),
         wrapper_(&zone_, num_params) {}
 
   static void SetUpTrapCallback() {
@@ -458,8 +470,8 @@ class WasmRunnerBase : public InitializedHandleScope {
   static FunctionSig* CreateSig(Zone* zone) {
     std::array<MachineType, sizeof...(ParamTypes)> param_machine_types{
         {MachineTypeForC<ParamTypes>()...}};
-    Vector<MachineType> param_vec(param_machine_types.data(),
-                                  param_machine_types.size());
+    base::Vector<MachineType> param_vec(param_machine_types.data(),
+                                        param_machine_types.size());
     return CreateSig(zone, MachineTypeForC<ReturnType>(), param_vec);
   }
 
@@ -496,11 +508,13 @@ class WasmRunnerBase : public InitializedHandleScope {
     }
   }
 
-  Handle<Code> GetWrapperCode() { return wrapper_.GetWrapperCode(); }
+  Handle<Code> GetWrapperCode() {
+    return wrapper_.GetWrapperCode(main_isolate());
+  }
 
  private:
   static FunctionSig* CreateSig(Zone* zone, MachineType return_type,
-                                Vector<MachineType> param_types);
+                                base::Vector<MachineType> param_types);
 
  protected:
   wasm::WasmCodeRefScope code_ref_scope_;
@@ -552,9 +566,10 @@ class WasmRunner : public WasmRunnerBase {
              const char* main_fn_name = "main",
              RuntimeExceptionSupport runtime_exception_support =
                  kNoRuntimeExceptionSupport,
-             LowerSimd lower_simd = kNoLowerSimd)
+             TestingModuleMemoryType mem_type = kMemory32,
+             Isolate* isolate = nullptr)
       : WasmRunnerBase(maybe_import, execution_tier, sizeof...(ParamTypes),
-                       runtime_exception_support, lower_simd) {
+                       runtime_exception_support, mem_type, isolate) {
     WasmFunctionCompiler& main_fn =
         NewFunction<ReturnType, ParamTypes...>(main_fn_name);
     // Non-zero if there is an import.
@@ -565,15 +580,10 @@ class WasmRunner : public WasmRunnerBase {
     }
   }
 
-  WasmRunner(TestExecutionTier execution_tier, LowerSimd lower_simd)
-      : WasmRunner(execution_tier, nullptr, "main", kNoRuntimeExceptionSupport,
-                   lower_simd) {}
-
   ReturnType Call(ParamTypes... p) {
-    Isolate* isolate = CcTest::InitIsolateOnce();
     // Save the original context, because CEntry (for runtime calls) will
     // reset / invalidate it when returning.
-    SaveContext save_context(isolate);
+    SaveContext save_context(main_isolate());
 
     DCHECK(compiled_);
     if (interpret()) return CallInterpreter(p...);
@@ -583,10 +593,9 @@ class WasmRunner : public WasmRunnerBase {
 
     wrapper_.SetInnerCode(builder_.GetFunctionCode(main_fn_index_));
     wrapper_.SetInstance(builder_.instance_object());
-    builder_.SetExecutable();
-    Handle<Code> wrapper_code = wrapper_.GetWrapperCode();
-    compiler::CodeRunner<int32_t> runner(CcTest::InitIsolateOnce(),
-                                         wrapper_code, wrapper_.signature());
+    Handle<Code> wrapper_code = GetWrapperCode();
+    compiler::CodeRunner<int32_t> runner(main_isolate(), wrapper_code,
+                                         wrapper_.signature());
     int32_t result;
     {
       SetThreadInWasmFlag();
@@ -633,6 +642,9 @@ class WasmRunner : public WasmRunnerBase {
   void CheckCallViaJSTraps(ParamTypes... p) {
     CheckCallViaJS(static_cast<double>(0xDEADBEEF), p...);
   }
+
+  void SetMaxSteps(int n) { builder_.set_max_steps(n); }
+  bool HasNondeterminism() { return builder_.nondeterminism(); }
 };
 
 // A macro to define tests that run in different engine configurations.
@@ -645,6 +657,19 @@ class WasmRunner : public WasmRunnerBase {
   TEST(RunWasmInterpreter_##name) {                                            \
     RunWasm_##name(TestExecutionTier::kInterpreter);                           \
   }                                                                            \
+  void RunWasm_##name(TestExecutionTier execution_tier)
+
+#define UNINITIALIZED_WASM_EXEC_TEST(name)               \
+  void RunWasm_##name(TestExecutionTier execution_tier); \
+  UNINITIALIZED_TEST(RunWasmTurbofan_##name) {           \
+    RunWasm_##name(TestExecutionTier::kTurbofan);        \
+  }                                                      \
+  UNINITIALIZED_TEST(RunWasmLiftoff_##name) {            \
+    RunWasm_##name(TestExecutionTier::kLiftoff);         \
+  }                                                      \
+  UNINITIALIZED_TEST(RunWasmInterpreter_##name) {        \
+    RunWasm_##name(TestExecutionTier::kInterpreter);     \
+  }                                                      \
   void RunWasm_##name(TestExecutionTier execution_tier)
 
 #define WASM_COMPILED_EXEC_TEST(name)                                          \

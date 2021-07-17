@@ -22,7 +22,8 @@ OBJECT_CONSTRUCTORS_IMPL(PropertyArray, HeapObject)
 CAST_ACCESSOR(PropertyArray)
 
 SMI_ACCESSORS(PropertyArray, length_and_hash, kLengthAndHashOffset)
-SYNCHRONIZED_SMI_ACCESSORS(PropertyArray, length_and_hash, kLengthAndHashOffset)
+RELEASE_ACQUIRE_SMI_ACCESSORS(PropertyArray, length_and_hash,
+                              kLengthAndHashOffset)
 
 Object PropertyArray::get(int index) const {
   PtrComprCageBase cage_base = GetPtrComprCageBase(*this);
@@ -31,7 +32,7 @@ Object PropertyArray::get(int index) const {
 
 Object PropertyArray::get(PtrComprCageBase cage_base, int index) const {
   DCHECK_LT(static_cast<unsigned>(index),
-            static_cast<unsigned>(this->length()));
+            static_cast<unsigned>(this->length(kAcquireLoad)));
   return TaggedField<Object>::Relaxed_Load(cage_base, *this,
                                            OffsetOfElementAt(index));
 }
@@ -39,7 +40,7 @@ Object PropertyArray::get(PtrComprCageBase cage_base, int index) const {
 void PropertyArray::set(int index, Object value) {
   DCHECK(IsPropertyArray());
   DCHECK_LT(static_cast<unsigned>(index),
-            static_cast<unsigned>(this->length()));
+            static_cast<unsigned>(this->length(kAcquireLoad)));
   int offset = OffsetOfElementAt(index);
   RELAXED_WRITE_FIELD(*this, offset, value);
   WRITE_BARRIER(*this, offset, value);
@@ -47,7 +48,7 @@ void PropertyArray::set(int index, Object value) {
 
 void PropertyArray::set(int index, Object value, WriteBarrierMode mode) {
   DCHECK_LT(static_cast<unsigned>(index),
-            static_cast<unsigned>(this->length()));
+            static_cast<unsigned>(this->length(kAcquireLoad)));
   int offset = OffsetOfElementAt(index);
   RELAXED_WRITE_FIELD(*this, offset, value);
   CONDITIONAL_WRITE_BARRIER(*this, offset, value, mode);
@@ -64,8 +65,8 @@ void PropertyArray::initialize_length(int len) {
   set_length_and_hash(len);
 }
 
-int PropertyArray::synchronized_length() const {
-  return LengthField::decode(synchronized_length_and_hash());
+int PropertyArray::length(AcquireLoadTag) const {
+  return LengthField::decode(length_and_hash(kAcquireLoad));
 }
 
 int PropertyArray::Hash() const { return HashField::decode(length_and_hash()); }
@@ -73,7 +74,7 @@ int PropertyArray::Hash() const { return HashField::decode(length_and_hash()); }
 void PropertyArray::SetHash(int hash) {
   int value = length_and_hash();
   value = HashField::update(value, hash);
-  set_length_and_hash(value);
+  set_length_and_hash(value, kReleaseStore);
 }
 
 void PropertyArray::CopyElements(Isolate* isolate, int dst_index,

@@ -28,13 +28,6 @@ NEVER_READ_ONLY_SPACE_IMPL(AccessorPair)
 
 TQ_OBJECT_CONSTRUCTORS_IMPL(ClassPositions)
 
-void Struct::InitializeBody(int object_size) {
-  Object value = GetReadOnlyRoots().undefined_value();
-  for (int offset = kHeaderSize; offset < object_size; offset += kTaggedSize) {
-    WRITE_FIELD(*this, offset, value);
-  }
-}
-
 Object AccessorPair::get(AccessorComponent component) {
   return component == ACCESSOR_GETTER ? getter() : setter();
 }
@@ -45,6 +38,14 @@ void AccessorPair::set(AccessorComponent component, Object value) {
   } else {
     set_setter(value);
   }
+}
+
+DEF_GETTER(AccessorPair, getter, Object) {
+  return TorqueGeneratedClass::getter(cage_base);
+}
+
+DEF_RELAXED_GETTER(AccessorPair, getter, Object) {
+  return TaggedField<Object, kGetterOffset>::Relaxed_Load(cage_base, *this);
 }
 
 void AccessorPair::SetComponents(Object getter, Object setter) {

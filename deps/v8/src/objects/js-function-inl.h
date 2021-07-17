@@ -12,11 +12,10 @@
 // clang-format from merging that include into the following ones).
 #include "src/codegen/compiler.h"
 #include "src/diagnostics/code-tracer.h"
-#include "src/heap/heap-inl.h"
 #include "src/ic/ic.h"
 #include "src/init/bootstrapper.h"
 #include "src/objects/feedback-cell-inl.h"
-#include "src/strings/string-builder-inl.h"
+#include "src/objects/shared-function-info-inl.h"
 
 // Has to be the last include (doesn't have include guards):
 #include "src/objects/object-macros.h"
@@ -91,7 +90,7 @@ void JSFunction::MarkForOptimization(ConcurrencyMode mode) {
     mode = ConcurrencyMode::kNotConcurrent;
   }
 
-  DCHECK(!is_compiled() || ActiveTierIsIgnition() || ActiveTierIsNCI() ||
+  DCHECK(!is_compiled() || ActiveTierIsIgnition() ||
          ActiveTierIsMidtierTurboprop() || ActiveTierIsBaseline());
   DCHECK(!ActiveTierIsTurbofan());
   DCHECK(shared().IsInterpreted());
@@ -131,8 +130,8 @@ void JSFunction::CompleteInobjectSlackTrackingIfActive() {
   }
 }
 
-template <typename LocalIsolate>
-AbstractCode JSFunction::abstract_code(LocalIsolate* isolate) {
+template <typename IsolateT>
+AbstractCode JSFunction::abstract_code(IsolateT* isolate) {
   if (ActiveTierIsIgnition()) {
     return AbstractCode::cast(shared().GetBytecodeArray(isolate));
   } else {
@@ -142,19 +141,30 @@ AbstractCode JSFunction::abstract_code(LocalIsolate* isolate) {
 
 int JSFunction::length() { return shared().length(); }
 
-Code JSFunction::code() const {
-  return Code::cast(RELAXED_READ_FIELD(*this, kCodeOffset));
+ACCESSORS_RELAXED(JSFunction, raw_code, CodeT, kCodeOffset)
+RELEASE_ACQUIRE_ACCESSORS(JSFunction, raw_code, CodeT, kCodeOffset)
+
+DEF_GETTER(JSFunction, code, Code) { return FromCodeT(raw_code(cage_base)); }
+
+void JSFunction::set_code(Code code, WriteBarrierMode mode) {
+  set_raw_code(ToCodeT(code), mode);
 }
 
-void JSFunction::set_code(Code value) {
-  DCHECK(!ObjectInYoungGeneration(value));
-  RELAXED_WRITE_FIELD(*this, kCodeOffset, value);
-#ifndef V8_DISABLE_WRITE_BARRIERS
-  WriteBarrier::Marking(*this, RawField(kCodeOffset), value);
-#endif
+DEF_ACQUIRE_GETTER(JSFunction, code, Code) {
+  return FromCodeT(raw_code(cage_base, kAcquireLoad));
 }
 
-RELEASE_ACQUIRE_ACCESSORS(JSFunction, code, Code, kCodeOffset)
+void JSFunction::set_code(Code code, ReleaseStoreTag, WriteBarrierMode mode) {
+  set_raw_code(ToCodeT(code), kReleaseStore, mode);
+}
+
+Address JSFunction::code_entry_point() const {
+  if (V8_EXTERNAL_CODE_SPACE_BOOL) {
+    return CodeDataContainer::cast(raw_code()).code_entry_point();
+  } else {
+    return code().InstructionStart();
+  }
+}
 
 // TODO(ishell): Why relaxed read but release store?
 DEF_GETTER(JSFunction, shared, SharedFunctionInfo) {
@@ -206,27 +216,28 @@ void JSFunction::set_context(HeapObject value, WriteBarrierMode mode) {
   CONDITIONAL_WRITE_BARRIER(*this, kContextOffset, value, mode);
 }
 
-ACCESSORS_CHECKED(JSFunction, prototype_or_initial_map, HeapObject,
-                  kPrototypeOrInitialMapOffset, map().has_prototype_slot())
+RELEASE_ACQUIRE_ACCESSORS_CHECKED(JSFunction, prototype_or_initial_map,
+                                  HeapObject, kPrototypeOrInitialMapOffset,
+                                  map().has_prototype_slot())
 
 DEF_GETTER(JSFunction, has_prototype_slot, bool) {
   return map(cage_base).has_prototype_slot();
 }
 
 DEF_GETTER(JSFunction, initial_map, Map) {
-  return Map::cast(prototype_or_initial_map(cage_base));
+  return Map::cast(prototype_or_initial_map(cage_base, kAcquireLoad));
 }
 
 DEF_GETTER(JSFunction, has_initial_map, bool) {
   DCHECK(has_prototype_slot(cage_base));
-  return prototype_or_initial_map(cage_base).IsMap(cage_base);
+  return prototype_or_initial_map(cage_base, kAcquireLoad).IsMap(cage_base);
 }
 
 DEF_GETTER(JSFunction, has_instance_prototype, bool) {
   DCHECK(has_prototype_slot(cage_base));
   return has_initial_map(cage_base) ||
-         !prototype_or_initial_map(cage_base).IsTheHole(
-             GetReadOnlyRoots(cage_base));
+         !prototype_or_initial_map(cage_base, kAcquireLoad)
+              .IsTheHole(GetReadOnlyRoots(cage_base));
 }
 
 DEF_GETTER(JSFunction, has_prototype, bool) {
@@ -251,7 +262,7 @@ DEF_GETTER(JSFunction, instance_prototype, HeapObject) {
     return initial_map(cage_base).prototype(cage_base);
   // When there is no initial map and the prototype is a JSReceiver, the
   // initial map field is used for the prototype field.
-  return HeapObject::cast(prototype_or_initial_map(cage_base));
+  return HeapObject::cast(prototype_or_initial_map(cage_base, kAcquireLoad));
 }
 
 DEF_GETTER(JSFunction, prototype, Object) {
@@ -269,7 +280,7 @@ DEF_GETTER(JSFunction, prototype, Object) {
 }
 
 bool JSFunction::is_compiled() const {
-  return code(kAcquireLoad).builtin_index() != Builtins::kCompileLazy &&
+  return code(kAcquireLoad).builtin_id() != Builtin::kCompileLazy &&
          shared().is_compiled();
 }
 
@@ -278,16 +289,14 @@ bool JSFunction::NeedsResetDueToFlushedBytecode() {
   // called on a concurrent thread and the JSFunction might not be fully
   // initialized yet.
   Object maybe_shared = ACQUIRE_READ_FIELD(*this, kSharedFunctionInfoOffset);
-  Object maybe_code = RELAXED_READ_FIELD(*this, kCodeOffset);
+  if (!maybe_shared.IsSharedFunctionInfo()) return false;
 
-  if (!maybe_shared.IsSharedFunctionInfo() || !maybe_code.IsCode()) {
-    return false;
-  }
+  Object maybe_code = RELAXED_READ_FIELD(*this, kCodeOffset);
+  if (!maybe_code.IsCodeT()) return false;
+  Code code = FromCodeT(CodeT::cast(maybe_code), kRelaxedLoad);
 
   SharedFunctionInfo shared = SharedFunctionInfo::cast(maybe_shared);
-  Code code = Code::cast(maybe_code);
-  return !shared.is_compiled() &&
-         code.builtin_index() != Builtins::kCompileLazy;
+  return !shared.is_compiled() && code.builtin_id() != Builtin::kCompileLazy;
 }
 
 void JSFunction::ResetIfBytecodeFlushed(
@@ -297,7 +306,7 @@ void JSFunction::ResetIfBytecodeFlushed(
   if (FLAG_flush_bytecode && NeedsResetDueToFlushedBytecode()) {
     // Bytecode was flushed and function is now uncompiled, reset JSFunction
     // by setting code to CompileLazy and clearing the feedback vector.
-    set_code(GetIsolate()->builtins()->builtin(i::Builtins::kCompileLazy));
+    set_code(*BUILTIN_CODE(GetIsolate(), CompileLazy));
     raw_feedback_cell().reset_feedback_vector(gc_notify_updated_slot);
   }
 }

@@ -34,6 +34,10 @@ class V8_EXPORT_PRIVATE CompilationDependencies : public ZoneObject {
 
   V8_WARN_UNUSED_RESULT bool Commit(Handle<Code> code);
 
+  // TODO(jgruber): Remove this method once GetPropertyAccessInfo no longer
+  // uses the two-phase approach between serialization and compilation.
+  void ClearForConcurrentGetPropertyAccessInfo() { dependencies_.clear(); }
+
   // Return the initial map of {function} and record the assumption that it
   // stays the initial map.
   MapRef DependOnInitialMap(const JSFunctionRef& function);
@@ -92,6 +96,23 @@ class V8_EXPORT_PRIVATE CompilationDependencies : public ZoneObject {
 
   // Record the assumption that {site}'s {ElementsKind} doesn't change.
   void DependOnElementsKind(const AllocationSiteRef& site);
+
+  void DependOnOwnConstantElement(const JSObjectRef& holder, uint32_t index,
+                                  const ObjectRef& element);
+
+  // Record the assumption that the {value} read from {holder} at {index} on the
+  // background thread is the correct value for a given property.
+  void DependOnOwnConstantDataProperty(const JSObjectRef& holder,
+                                       const MapRef& map,
+                                       Representation representation,
+                                       FieldIndex index,
+                                       const ObjectRef& value);
+
+  // Record the assumption that the {value} read from {holder} at {index} on the
+  // background thread is the correct value for a given dictionary property.
+  void DependOnOwnConstantDictionaryProperty(const JSObjectRef& holder,
+                                             InternalIndex index,
+                                             const ObjectRef& value);
 
   // For each given map, depend on the stability of (the maps of) all prototypes
   // up to (and including) the {last_prototype}.

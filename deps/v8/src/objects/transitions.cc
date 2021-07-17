@@ -449,7 +449,6 @@ int TransitionsAccessor::NumberOfTransitions() {
       return transitions().number_of_transitions();
   }
   UNREACHABLE();
-  return 0;  // Make GCC happy.
 }
 
 void TransitionsAccessor::SetMigrationTarget(Map migration_target) {
@@ -510,7 +509,7 @@ void TransitionsAccessor::EnsureHasFullTransitionArray() {
 }
 
 void TransitionsAccessor::TraverseTransitionTreeInternal(
-    TraverseCallback callback, void* data, DisallowGarbageCollection* no_gc) {
+    TraverseCallback callback, DisallowGarbageCollection* no_gc) {
   switch (encoding()) {
     case kPrototypeInfo:
     case kUninitialized:
@@ -520,7 +519,7 @@ void TransitionsAccessor::TraverseTransitionTreeInternal(
       Map simple_target =
           Map::cast(raw_transitions_->GetHeapObjectAssumeWeak());
       TransitionsAccessor(isolate_, simple_target, no_gc)
-          .TraverseTransitionTreeInternal(callback, data, no_gc);
+          .TraverseTransitionTreeInternal(callback, no_gc);
       break;
     }
     case kFullTransitionArray: {
@@ -533,7 +532,7 @@ void TransitionsAccessor::TraverseTransitionTreeInternal(
           HeapObject heap_object;
           if (target->GetHeapObjectIfWeak(&heap_object)) {
             TransitionsAccessor(isolate_, Map::cast(heap_object), no_gc)
-                .TraverseTransitionTreeInternal(callback, data, no_gc);
+                .TraverseTransitionTreeInternal(callback, no_gc);
           } else {
             DCHECK(target->IsCleared());
           }
@@ -541,12 +540,12 @@ void TransitionsAccessor::TraverseTransitionTreeInternal(
       }
       for (int i = 0; i < transitions().number_of_transitions(); ++i) {
         TransitionsAccessor(isolate_, transitions().GetTarget(i), no_gc)
-            .TraverseTransitionTreeInternal(callback, data, no_gc);
+            .TraverseTransitionTreeInternal(callback, no_gc);
       }
       break;
     }
   }
-  callback(map_, data);
+  callback(map_);
 }
 
 #ifdef DEBUG

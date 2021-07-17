@@ -21,7 +21,6 @@ namespace internal {
 // identified in the type system.
 class Struct : public TorqueGeneratedStruct<Struct, HeapObject> {
  public:
-  inline void InitializeBody(int object_size);
   void BriefPrintDetails(std::ostream& os);
   STATIC_ASSERT(kHeaderSize == HeapObject::kHeaderSize);
 
@@ -48,6 +47,9 @@ class AccessorPair : public TorqueGeneratedAccessorPair<AccessorPair, Struct> {
 
   inline Object get(AccessorComponent component);
   inline void set(AccessorComponent component, Object value);
+
+  DECL_GETTER(getter, Object)
+  DECL_RELAXED_GETTER(getter, Object)
 
   // Note: Returns undefined if the component is not set.
   static Handle<Object> GetComponent(Isolate* isolate,

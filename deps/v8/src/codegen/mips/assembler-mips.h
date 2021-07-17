@@ -1907,7 +1907,7 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase {
 
 class EnsureSpace {
  public:
-  explicit inline EnsureSpace(Assembler* assembler);
+  explicit V8_INLINE EnsureSpace(Assembler* assembler);
 };
 
 class V8_EXPORT_PRIVATE V8_NODISCARD UseScratchRegisterScope {
@@ -1917,6 +1917,17 @@ class V8_EXPORT_PRIVATE V8_NODISCARD UseScratchRegisterScope {
 
   Register Acquire();
   bool hasAvailable() const;
+
+  void Include(const RegList& list) { *available_ |= list; }
+  void Exclude(const RegList& list) { *available_ &= ~list; }
+  void Include(const Register& reg1, const Register& reg2 = no_reg) {
+    RegList list(reg1.bit() | reg2.bit());
+    Include(list);
+  }
+  void Exclude(const Register& reg1, const Register& reg2 = no_reg) {
+    RegList list(reg1.bit() | reg2.bit());
+    Exclude(list);
+  }
 
  private:
   RegList* available_;

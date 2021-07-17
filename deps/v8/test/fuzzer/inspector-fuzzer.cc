@@ -3,8 +3,8 @@
 // found in the LICENSE file.
 
 #if !defined(_WIN32) && !defined(_WIN64)
-#include <unistd.h>  // NOLINT
-#endif               // !defined(_WIN32) && !defined(_WIN64)
+#include <unistd.h>
+#endif  // !defined(_WIN32) && !defined(_WIN64)
 
 #include <locale.h>
 
@@ -16,11 +16,11 @@
 #include "src/base/platform/platform.h"
 #include "src/base/platform/time.h"
 #include "src/base/small-vector.h"
+#include "src/base/vector.h"
 #include "src/flags/flags.h"
 #include "src/heap/read-only-heap.h"
 #include "src/libplatform/default-platform.h"
 #include "src/utils/utils.h"
-#include "src/utils/vector.h"
 #include "test/inspector/frontend-channel.h"
 #include "test/inspector/isolate-data.h"
 #include "test/inspector/task-runner.h"
@@ -439,14 +439,14 @@ class InspectorExtension : public IsolateData::SetupGlobalTask {
   static void AccessorGetter(v8::Local<v8::String> property,
                              const v8::PropertyCallbackInfo<v8::Value>& info) {
     v8::Isolate* isolate = info.GetIsolate();
-    isolate->ThrowException(ToV8String(isolate, "Getter is called"));
+    isolate->ThrowError("Getter is called");
   }
 
   static void AccessorSetter(v8::Local<v8::String> property,
                              v8::Local<v8::Value> value,
                              const v8::PropertyCallbackInfo<void>& info) {
     v8::Isolate* isolate = info.GetIsolate();
-    isolate->ThrowException(ToV8String(isolate, "Setter is called"));
+    isolate->ThrowError("Setter is called");
   }
 
   static void StoreCurrentStackTrace(
@@ -541,7 +541,7 @@ class InspectorExtension : public IsolateData::SetupGlobalTask {
   }
 };
 
-using CharVector = v8::internal::Vector<const char>;
+using CharVector = v8::base::Vector<const char>;
 
 constexpr auto kMaxExecutionSeconds = v8::base::TimeDelta::FromSeconds(2);
 

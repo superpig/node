@@ -8,8 +8,8 @@
 #include "src/flags/flags.h"
 
 #if !defined(_WIN32) && !defined(_WIN64)
-#include <unistd.h>  // NOLINT
-#endif               // !defined(_WIN32) && !defined(_WIN64)
+#include <unistd.h>
+#endif  // !defined(_WIN32) && !defined(_WIN64)
 
 namespace v8 {
 namespace internal {
@@ -136,7 +136,6 @@ std::unique_ptr<TaskRunner::Task> TaskRunner::GetNext(bool only_protocol) {
     }
     process_queue_semaphore_.Wait();
   }
-  return nullptr;
 }
 
 }  // namespace internal

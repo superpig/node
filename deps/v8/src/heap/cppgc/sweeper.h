@@ -9,6 +9,8 @@
 
 #include "include/cppgc/heap.h"
 #include "src/base/macros.h"
+#include "src/base/platform/time.h"
+#include "src/heap/cppgc/memory.h"
 
 namespace cppgc {
 
@@ -25,11 +27,17 @@ class V8_EXPORT_PRIVATE Sweeper final {
   struct SweepingConfig {
     using SweepingType = cppgc::Heap::SweepingType;
     enum class CompactableSpaceHandling { kSweep, kIgnore };
+    enum class FreeMemoryHandling { kDoNotDiscard, kDiscardWherePossible };
 
     SweepingType sweeping_type = SweepingType::kIncrementalAndConcurrent;
     CompactableSpaceHandling compactable_space_handling =
         CompactableSpaceHandling::kSweep;
+    FreeMemoryHandling free_memory_handling = FreeMemoryHandling::kDoNotDiscard;
   };
+
+  static constexpr bool CanDiscardMemory() {
+    return CheckMemoryIsInaccessibleIsNoop();
+  }
 
   explicit Sweeper(HeapBase&);
   ~Sweeper();
@@ -48,6 +56,9 @@ class V8_EXPORT_PRIVATE Sweeper final {
 
   bool IsSweepingOnMutatorThread() const;
   bool IsSweepingInProgress() const;
+
+  // Assist with sweeping. Returns true if sweeping is done.
+  bool PerformSweepOnMutatorThread(double deadline_in_seconds);
 
  private:
   void WaitForConcurrentSweepingForTesting();

@@ -4,8 +4,8 @@
 
 #include "test/inspector/isolate-data.h"
 
+#include "src/base/vector.h"
 #include "src/inspector/test-interface.h"
-#include "src/utils/vector.h"
 #include "test/inspector/task-runner.h"
 #include "test/inspector/utils.h"
 
@@ -139,8 +139,14 @@ v8::MaybeLocal<v8::Module> IsolateData::ModuleResolveCallback(
   // TODO(v8:11189) Consider JSON modules support in the InspectorClient
   IsolateData* data = IsolateData::FromContext(context);
   std::string str = *v8::String::Utf8Value(data->isolate(), specifier);
-  return data->modules_[ToVector(data->isolate(), specifier)].Get(
-      data->isolate());
+  v8::MaybeLocal<v8::Module> maybe_module =
+      data->modules_[ToVector(data->isolate(), specifier)].Get(data->isolate());
+  if (maybe_module.IsEmpty()) {
+    data->isolate()->ThrowError(v8::String::Concat(
+        data->isolate(),
+        ToV8String(data->isolate(), "Failed to resolve module: "), specifier));
+  }
+  return maybe_module;
 }
 
 int IsolateData::ConnectSession(int context_group_id,
@@ -465,6 +471,13 @@ void IsolateData::maxAsyncCallStackDepthChanged(int depth) {
 
 void IsolateData::SetResourceNamePrefix(v8::Local<v8::String> prefix) {
   resource_name_prefix_.Reset(isolate(), prefix);
+}
+
+bool IsolateData::AssociateExceptionData(v8::Local<v8::Value> exception,
+                                         v8::Local<v8::Name> key,
+                                         v8::Local<v8::Value> value) {
+  return inspector_->associateExceptionData(
+      this->isolate()->GetCurrentContext(), exception, key, value);
 }
 
 namespace {

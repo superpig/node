@@ -244,9 +244,8 @@ class Serializer : public SerializerDeserializer {
   // Returns true if the given heap object is a bytecode handler code object.
   bool ObjectIsBytecodeHandler(Handle<HeapObject> obj) const;
 
-  ExternalReferenceEncoder::Value EncodeExternalReference(Address addr) {
-    return external_reference_encoder_.Encode(addr);
-  }
+  ExternalReferenceEncoder::Value EncodeExternalReference(Address addr);
+
   Maybe<ExternalReferenceEncoder::Value> TryEncodeExternalReference(
       Address addr) {
     return external_reference_encoder_.TryEncode(addr);
@@ -296,6 +295,10 @@ class Serializer : public SerializerDeserializer {
   }
   bool allow_active_isolate_for_testing() const {
     return (flags_ & Snapshot::kAllowActiveIsolateForTesting) != 0;
+  }
+
+  bool reconstruct_read_only_object_cache_for_testing() const {
+    return (flags_ & Snapshot::kReconstructReadOnlyObjectCacheForTesting) != 0;
   }
 
  private:
@@ -410,7 +413,6 @@ class Serializer::ObjectSerializer : public ObjectVisitor {
     serializer_->PushStack(obj);
 #endif  // DEBUG
   }
-  // NOLINTNEXTLINE (modernize-use-equals-default)
   ~ObjectSerializer() override {
 #ifdef DEBUG
     serializer_->PopStack();

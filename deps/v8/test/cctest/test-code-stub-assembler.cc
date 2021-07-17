@@ -5,12 +5,14 @@
 #include <cmath>
 
 #include "src/api/api-inl.h"
+#include "src/base/strings.h"
 #include "src/base/utils/random-number-generator.h"
 #include "src/builtins/builtins-promise-gen.h"
 #include "src/builtins/builtins-promise.h"
 #include "src/builtins/builtins-string-gen.h"
 #include "src/codegen/code-factory.h"
 #include "src/codegen/code-stub-assembler.h"
+#include "src/codegen/interface-descriptors-inl.h"
 #include "src/compiler/node.h"
 #include "src/debug/debug.h"
 #include "src/execution/isolate.h"
@@ -101,7 +103,7 @@ TEST(CallCFunctionWithCallerSavedRegisters) {
 
     TNode<IntPtrT> const result =
         m.UncheckedCast<IntPtrT>(m.CallCFunctionWithCallerSavedRegisters(
-            fun_constant, type_intptr, kSaveFPRegs,
+            fun_constant, type_intptr, SaveFPRegsMode::kSave,
             std::make_pair(type_intptr, m.IntPtrConstant(0)),
             std::make_pair(type_intptr, m.IntPtrConstant(1)),
             std::make_pair(type_intptr, m.IntPtrConstant(2))));
@@ -767,18 +769,18 @@ TEST(TryToName) {
     ft.CheckTrue(key, expect_bailout);
   }
 
-  if (FLAG_thin_strings) {
+  {
     // TryToName(<thin string>) => internalized version.
     Handle<String> s = isolate->factory()->NewStringFromAsciiChecked("foo");
     Handle<String> internalized = isolate->factory()->InternalizeString(s);
     ft.CheckTrue(s, expect_unique, internalized);
   }
 
-  if (FLAG_thin_strings) {
+  {
     // TryToName(<thin two-byte string>) => internalized version.
-    uc16 array1[] = {2001, 2002, 2003};
+    base::uc16 array1[] = {2001, 2002, 2003};
     Handle<String> s = isolate->factory()
-                           ->NewStringFromTwoByte(ArrayVector(array1))
+                           ->NewStringFromTwoByte(base::ArrayVector(array1))
                            .ToHandleChecked();
     Handle<String> internalized = isolate->factory()->InternalizeString(s);
     ft.CheckTrue(s, expect_unique, internalized);
@@ -1675,7 +1677,7 @@ TEST(TryLookupElement) {
 #define CHECK_ABSENT(object, index)                  \
   {                                                  \
     Handle<Smi> smi(Smi::FromInt(index), isolate);   \
-    LookupIterator::Key key(isolate, smi);           \
+    PropertyKey key(isolate, smi);                   \
     LookupIterator it(isolate, object, key);         \
     CHECK(!JSReceiver::HasProperty(&it).FromJust()); \
     ft.CheckTrue(object, smi, expect_absent);        \
@@ -2024,7 +2026,7 @@ TEST(PopAndReturnFromTFCBuiltinWithStackParameters) {
   // least one argument passed on stack.
   using Descriptor = FlatMapIntoArrayDescriptor;
   Descriptor descriptor;
-  CHECK_LT(0, descriptor.GetStackParameterCount());
+  CHECK_LT(0, Descriptor::GetStackParameterCount());
 
   CodeAssemblerTester asm_tester(isolate, Descriptor());
   {
@@ -2195,9 +2197,9 @@ TEST(OneToTwoByteStringCopy) {
   m.Return(m.SmiConstant(Smi::FromInt(0)));
 
   Handle<String> string1 = isolate->factory()->InternalizeUtf8String("abcde");
-  uc16 array[] = {1000, 1001, 1002, 1003, 1004};
+  base::uc16 array[] = {1000, 1001, 1002, 1003, 1004};
   Handle<String> string2 = isolate->factory()
-                               ->NewStringFromTwoByte(ArrayVector(array))
+                               ->NewStringFromTwoByte(base::ArrayVector(array))
                                .ToHandleChecked();
   FunctionTester ft(asm_tester.GenerateCode(), kNumParams);
   ft.Call(string1, string2);
@@ -2230,7 +2232,7 @@ TEST(OneToOneByteStringCopy) {
   Handle<String> string1 = isolate->factory()->InternalizeUtf8String("abcde");
   uint8_t array[] = {100, 101, 102, 103, 104};
   Handle<String> string2 = isolate->factory()
-                               ->NewStringFromOneByte(ArrayVector(array))
+                               ->NewStringFromOneByte(base::ArrayVector(array))
                                .ToHandleChecked();
   FunctionTester ft(asm_tester.GenerateCode(), kNumParams);
   ft.Call(string1, string2);
@@ -2263,7 +2265,7 @@ TEST(OneToOneByteStringCopyNonZeroStart) {
   Handle<String> string1 = isolate->factory()->InternalizeUtf8String("abcde");
   uint8_t array[] = {100, 101, 102, 103, 104};
   Handle<String> string2 = isolate->factory()
-                               ->NewStringFromOneByte(ArrayVector(array))
+                               ->NewStringFromOneByte(base::ArrayVector(array))
                                .ToHandleChecked();
   FunctionTester ft(asm_tester.GenerateCode(), kNumParams);
   ft.Call(string1, string2);
@@ -2290,13 +2292,13 @@ TEST(TwoToTwoByteStringCopy) {
                                  String::TWO_BYTE_ENCODING);
   m.Return(m.SmiConstant(Smi::FromInt(0)));
 
-  uc16 array1[] = {2000, 2001, 2002, 2003, 2004};
+  base::uc16 array1[] = {2000, 2001, 2002, 2003, 2004};
   Handle<String> string1 = isolate->factory()
-                               ->NewStringFromTwoByte(ArrayVector(array1))
+                               ->NewStringFromTwoByte(base::ArrayVector(array1))
                                .ToHandleChecked();
-  uc16 array2[] = {1000, 1001, 1002, 1003, 1004};
+  base::uc16 array2[] = {1000, 1001, 1002, 1003, 1004};
   Handle<String> string2 = isolate->factory()
-                               ->NewStringFromTwoByte(ArrayVector(array2))
+                               ->NewStringFromTwoByte(base::ArrayVector(array2))
                                .ToHandleChecked();
   FunctionTester ft(asm_tester.GenerateCode(), kNumParams);
   ft.Call(string1, string2);
@@ -2493,7 +2495,7 @@ TEST(CallBuiltin) {
     auto name = m.Parameter<Name>(2);
     auto context = m.Parameter<Context>(kNumParams + 3);
 
-    auto value = m.CallBuiltin(Builtins::kGetProperty, context, receiver, name);
+    auto value = m.CallBuiltin(Builtin::kGetProperty, context, receiver, name);
     m.Return(value);
   }
 
@@ -2522,7 +2524,7 @@ TEST(TailCallBuiltin) {
     auto name = m.Parameter<Name>(2);
     auto context = m.Parameter<Context>(kNumParams + 3);
 
-    m.TailCallBuiltin(Builtins::kGetProperty, context, receiver, name);
+    m.TailCallBuiltin(Builtin::kGetProperty, context, receiver, name);
   }
 
   FunctionTester ft(asm_tester.GenerateCode(), kNumParams);
@@ -3002,7 +3004,7 @@ TEST(NewPromiseCapability) {
 
     const TNode<Oddball> debug_event = m.TrueConstant();
     const TNode<Object> capability =
-        m.CallBuiltin(Builtins::kNewPromiseCapability, context,
+        m.CallBuiltin(Builtin::kNewPromiseCapability, context,
                       promise_constructor, debug_event);
     m.Return(capability);
 
@@ -3048,7 +3050,7 @@ TEST(NewPromiseCapability) {
     auto constructor = m.Parameter<Object>(1);
     const TNode<Oddball> debug_event = m.TrueConstant();
     const TNode<Object> capability = m.CallBuiltin(
-        Builtins::kNewPromiseCapability, context, constructor, debug_event);
+        Builtin::kNewPromiseCapability, context, constructor, debug_event);
     m.Return(capability);
 
     FunctionTester ft(asm_tester.GenerateCode(), kNumParams);
@@ -3069,7 +3071,8 @@ TEST(NewPromiseCapability) {
 
     CHECK(result->promise().IsJSObject());
     Handle<JSObject> promise(JSObject::cast(result->promise()), isolate);
-    CHECK_EQ(constructor_fn->prototype_or_initial_map(), promise->map());
+    CHECK_EQ(constructor_fn->prototype_or_initial_map(kAcquireLoad),
+             promise->map());
     CHECK(result->resolve().IsJSFunction());
     CHECK(result->reject().IsJSFunction());
 
@@ -3311,7 +3314,7 @@ TEST(IsWhiteSpaceOrLineTerminator) {
   Handle<Object> true_value = ft.true_value();
   Handle<Object> false_value = ft.false_value();
 
-  for (uc16 c = 0; c < 0xFFFF; c++) {
+  for (base::uc16 c = 0; c < 0xFFFF; c++) {
     Handle<Object> expected_value =
         IsWhiteSpaceOrLineTerminator(c) ? true_value : false_value;
     ft.CheckCall(expected_value, handle(Smi::FromInt(c), isolate));
@@ -3898,7 +3901,7 @@ TEST(TestCallBuiltinInlineTrampoline) {
 
   TNode<Smi> index = m.SmiConstant(2);
 
-  m.Return(m.CallStub(Builtins::CallableFor(isolate, Builtins::kStringRepeat),
+  m.Return(m.CallStub(Builtins::CallableFor(isolate, Builtin::kStringRepeat),
                       context, str, index));
   AssemblerOptions options = AssemblerOptions::Default(isolate);
   options.inline_offheap_trampolines = true;
@@ -3924,7 +3927,7 @@ DISABLED_TEST(TestCallBuiltinIndirectLoad) {
 
   TNode<Smi> index = m.SmiConstant(2);
 
-  m.Return(m.CallStub(Builtins::CallableFor(isolate, Builtins::kStringRepeat),
+  m.Return(m.CallStub(Builtins::CallableFor(isolate, Builtin::kStringRepeat),
                       context, str, index));
   AssemblerOptions options = AssemblerOptions::Default(isolate);
   options.inline_offheap_trampolines = false;
@@ -3956,7 +3959,7 @@ TEST(InstructionSchedulingCallerSavedRegisters) {
     m.CallCFunctionWithCallerSavedRegisters(
         m.ExternalConstant(
             ExternalReference::smi_lexicographic_compare_function()),
-        MachineType::Int32(), kSaveFPRegs,
+        MachineType::Int32(), SaveFPRegsMode::kSave,
         std::make_pair(MachineType::Pointer(), isolate_ptr),
         std::make_pair(MachineType::TaggedSigned(), m.SmiConstant(0)),
         std::make_pair(MachineType::TaggedSigned(), m.SmiConstant(0)));
@@ -4001,7 +4004,7 @@ TEST(WasmInt32ToHeapNumber) {
     CodeStubAssembler m(asm_tester.state());
     const TNode<Int32T> arg = m.Int32Constant(test_value);
     const TNode<Object> call_result = m.CallBuiltin(
-        Builtins::kWasmInt32ToHeapNumber, m.NoContextConstant(), arg);
+        Builtin::kWasmInt32ToHeapNumber, m.NoContextConstant(), arg);
     m.Return(call_result);
 
     FunctionTester ft(asm_tester.GenerateCode(), kNumParams);
@@ -4047,7 +4050,7 @@ TEST(WasmTaggedNonSmiToInt32) {
   const auto arg = m.Parameter<Object>(1);
   int32_t result = 0;
   Node* base = m.IntPtrConstant(reinterpret_cast<intptr_t>(&result));
-  Node* value = m.CallBuiltin(Builtins::kWasmTaggedNonSmiToInt32, context, arg);
+  Node* value = m.CallBuiltin(Builtin::kWasmTaggedNonSmiToInt32, context, arg);
   m.StoreNoWriteBarrier(MachineRepresentation::kWord32, base, value);
   m.Return(m.UndefinedConstant());
 
@@ -4087,7 +4090,7 @@ TEST(WasmFloat32ToNumber) {
     CodeStubAssembler m(asm_tester.state());
     const TNode<Float32T> arg = m.Float32Constant(test_value);
     const TNode<Object> call_result = m.CallBuiltin(
-        Builtins::kWasmFloat32ToNumber, m.NoContextConstant(), arg);
+        Builtin::kWasmFloat32ToNumber, m.NoContextConstant(), arg);
     m.Return(call_result);
 
     FunctionTester ft(asm_tester.GenerateCode(), kNumParams);
@@ -4127,7 +4130,7 @@ TEST(WasmFloat64ToNumber) {
     CodeStubAssembler m(asm_tester.state());
     const TNode<Float64T> arg = m.Float64Constant(test_value);
     const TNode<Object> call_result = m.CallBuiltin(
-        Builtins::kWasmFloat64ToNumber, m.NoContextConstant(), arg);
+        Builtin::kWasmFloat64ToNumber, m.NoContextConstant(), arg);
     m.Return(call_result);
 
     FunctionTester ft(asm_tester.GenerateCode(), kNumParams);
@@ -4183,7 +4186,7 @@ TEST(WasmTaggedToFloat64) {
   const auto arg = m.Parameter<Object>(1);
   double result = 0;
   Node* base = m.IntPtrConstant(reinterpret_cast<intptr_t>(&result));
-  Node* value = m.CallBuiltin(Builtins::kWasmTaggedToFloat64, context, arg);
+  Node* value = m.CallBuiltin(Builtin::kWasmTaggedToFloat64, context, arg);
   m.StoreNoWriteBarrier(MachineRepresentation::kFloat64, base, value);
   m.Return(m.UndefinedConstant());
 

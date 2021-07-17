@@ -55,7 +55,11 @@ static unsigned CpuFeaturesImpliedByCompiler() {
 }
 
 bool CpuFeatures::SupportsWasmSimd128() {
+#if V8_ENABLE_WEBASSEMBLY
   return CpuFeatures::IsSupported(SIMD);
+#else
+  return false;
+#endif  // V8_ENABLE_WEBASSEMBLY
 }
 
 void CpuFeatures::ProbeImpl(bool cross_compile) {
@@ -221,6 +225,9 @@ MemOperand::MemOperand(Register rn, int32_t offset)
 
 MemOperand::MemOperand(Register ra, Register rb)
     : ra_(ra), offset_(0), rb_(rb) {}
+
+MemOperand::MemOperand(Register ra, Register rb, int32_t offset)
+    : ra_(ra), offset_(offset), rb_(rb) {}
 
 void Assembler::AllocateAndInstallRequestedHeapObjects(Isolate* isolate) {
   DCHECK_IMPLIES(isolate == nullptr, heap_object_requests_.empty());
@@ -1819,75 +1826,94 @@ void Assembler::mtvsrdd(const Simd128Register rt, const Register ra,
 }
 
 void Assembler::lxvd(const Simd128Register rt, const MemOperand& src) {
+  CHECK(src.rb().is_valid());
   int TX = 1;
   emit(LXVD | rt.code() * B21 | src.ra().code() * B16 | src.rb().code() * B11 |
        TX);
 }
 
+void Assembler::lxvx(const Simd128Register rt, const MemOperand& src) {
+  CHECK(src.rb().is_valid());
+  int TX = 1;
+  emit(LXVX | rt.code() * B21 | src.ra().code() * B16 | src.rb().code() * B11 |
+       TX);
+}
+
 void Assembler::lxsdx(const Simd128Register rt, const MemOperand& src) {
+  CHECK(src.rb().is_valid());
   int TX = 1;
   emit(LXSDX | rt.code() * B21 | src.ra().code() * B16 | src.rb().code() * B11 |
        TX);
 }
 
 void Assembler::lxsibzx(const Simd128Register rt, const MemOperand& src) {
+  CHECK(src.rb().is_valid());
   int TX = 1;
   emit(LXSIBZX | rt.code() * B21 | src.ra().code() * B16 |
        src.rb().code() * B11 | TX);
 }
 
 void Assembler::lxsihzx(const Simd128Register rt, const MemOperand& src) {
+  CHECK(src.rb().is_valid());
   int TX = 1;
   emit(LXSIHZX | rt.code() * B21 | src.ra().code() * B16 |
        src.rb().code() * B11 | TX);
 }
 
 void Assembler::lxsiwzx(const Simd128Register rt, const MemOperand& src) {
+  CHECK(src.rb().is_valid());
   int TX = 1;
   emit(LXSIWZX | rt.code() * B21 | src.ra().code() * B16 |
        src.rb().code() * B11 | TX);
 }
 
-void Assembler::stxsdx(const Simd128Register rs, const MemOperand& src) {
+void Assembler::stxsdx(const Simd128Register rs, const MemOperand& dst) {
+  CHECK(dst.rb().is_valid());
   int SX = 1;
-  emit(STXSDX | rs.code() * B21 | src.ra().code() * B16 |
-       src.rb().code() * B11 | SX);
+  emit(STXSDX | rs.code() * B21 | dst.ra().code() * B16 |
+       dst.rb().code() * B11 | SX);
 }
 
-void Assembler::stxsibx(const Simd128Register rs, const MemOperand& src) {
+void Assembler::stxsibx(const Simd128Register rs, const MemOperand& dst) {
+  CHECK(dst.rb().is_valid());
   int SX = 1;
-  emit(STXSIBX | rs.code() * B21 | src.ra().code() * B16 |
-       src.rb().code() * B11 | SX);
+  emit(STXSIBX | rs.code() * B21 | dst.ra().code() * B16 |
+       dst.rb().code() * B11 | SX);
 }
 
-void Assembler::stxsihx(const Simd128Register rs, const MemOperand& src) {
+void Assembler::stxsihx(const Simd128Register rs, const MemOperand& dst) {
+  CHECK(dst.rb().is_valid());
   int SX = 1;
-  emit(STXSIHX | rs.code() * B21 | src.ra().code() * B16 |
-       src.rb().code() * B11 | SX);
+  emit(STXSIHX | rs.code() * B21 | dst.ra().code() * B16 |
+       dst.rb().code() * B11 | SX);
 }
 
-void Assembler::stxsiwx(const Simd128Register rs, const MemOperand& src) {
+void Assembler::stxsiwx(const Simd128Register rs, const MemOperand& dst) {
+  CHECK(dst.rb().is_valid());
   int SX = 1;
-  emit(STXSIWX | rs.code() * B21 | src.ra().code() * B16 |
-       src.rb().code() * B11 | SX);
+  emit(STXSIWX | rs.code() * B21 | dst.ra().code() * B16 |
+       dst.rb().code() * B11 | SX);
 }
 
 void Assembler::stxvd(const Simd128Register rt, const MemOperand& dst) {
+  CHECK(dst.rb().is_valid());
   int SX = 1;
   emit(STXVD | rt.code() * B21 | dst.ra().code() * B16 | dst.rb().code() * B11 |
+       SX);
+}
+
+void Assembler::stxvx(const Simd128Register rt, const MemOperand& dst) {
+  CHECK(dst.rb().is_valid());
+  int SX = 1;
+  emit(STXVX | rt.code() * B21 | dst.ra().code() * B16 | dst.rb().code() * B11 |
        SX);
 }
 
 void Assembler::xxspltib(const Simd128Register rt, const Operand& imm) {
   int TX = 1;
   CHECK(is_uint8(imm.immediate()));
-  emit(XXSPLTIB | rt.code() * B21 | imm.immediate() * B11 | TX);
-}
-
-void Assembler::xxbrq(const Simd128Register rt, const Simd128Register rb) {
-  int BX = 1;
-  int TX = 1;
-  emit(XXBRQ | rt.code() * B21 | 31 * B16 | rb.code() * B11 | BX * B1 | TX);
+  emit(XXSPLTIB | (rt.code() & 0x1F) * B21 | (imm.immediate() & 0xFF) * B11 |
+       TX);
 }
 
 // Pseudo instructions.
@@ -1977,7 +2003,8 @@ void Assembler::db(uint8_t data) {
 void Assembler::dd(uint32_t data, RelocInfo::Mode rmode) {
   CheckBuffer();
   if (!RelocInfo::IsNone(rmode)) {
-    DCHECK(RelocInfo::IsDataEmbeddedObject(rmode));
+    DCHECK(RelocInfo::IsDataEmbeddedObject(rmode) ||
+           RelocInfo::IsLiteralConstant(rmode));
     RecordRelocInfo(rmode);
   }
   *reinterpret_cast<uint32_t*>(pc_) = data;
@@ -1987,7 +2014,8 @@ void Assembler::dd(uint32_t data, RelocInfo::Mode rmode) {
 void Assembler::dq(uint64_t value, RelocInfo::Mode rmode) {
   CheckBuffer();
   if (!RelocInfo::IsNone(rmode)) {
-    DCHECK(RelocInfo::IsDataEmbeddedObject(rmode));
+    DCHECK(RelocInfo::IsDataEmbeddedObject(rmode) ||
+           RelocInfo::IsLiteralConstant(rmode));
     RecordRelocInfo(rmode);
   }
   *reinterpret_cast<uint64_t*>(pc_) = value;
@@ -1997,7 +2025,8 @@ void Assembler::dq(uint64_t value, RelocInfo::Mode rmode) {
 void Assembler::dp(uintptr_t data, RelocInfo::Mode rmode) {
   CheckBuffer();
   if (!RelocInfo::IsNone(rmode)) {
-    DCHECK(RelocInfo::IsDataEmbeddedObject(rmode));
+    DCHECK(RelocInfo::IsDataEmbeddedObject(rmode) ||
+           RelocInfo::IsLiteralConstant(rmode));
     RecordRelocInfo(rmode);
   }
   *reinterpret_cast<uintptr_t*>(pc_) = data;

@@ -136,7 +136,6 @@ int InstructionScheduler::GetTargetInstructionFlags(
     case kPPC_F64x2Ceil:
     case kPPC_F64x2Floor:
     case kPPC_F64x2Trunc:
-    case kPPC_F64x2NearestInt:
     case kPPC_F64x2Pmin:
     case kPPC_F64x2Pmax:
     case kPPC_F64x2ConvertLowI32x4S:
@@ -167,7 +166,6 @@ int InstructionScheduler::GetTargetInstructionFlags(
     case kPPC_F32x4Ceil:
     case kPPC_F32x4Floor:
     case kPPC_F32x4Trunc:
-    case kPPC_F32x4NearestInt:
     case kPPC_F32x4Pmin:
     case kPPC_F32x4Pmax:
     case kPPC_F32x4DemoteF64x2Zero:
@@ -177,15 +175,9 @@ int InstructionScheduler::GetTargetInstructionFlags(
     case kPPC_I64x2Add:
     case kPPC_I64x2Sub:
     case kPPC_I64x2Mul:
-    case kPPC_I64x2MinS:
-    case kPPC_I64x2MinU:
-    case kPPC_I64x2MaxS:
-    case kPPC_I64x2MaxU:
     case kPPC_I64x2Eq:
     case kPPC_I64x2Ne:
     case kPPC_I64x2GtS:
-    case kPPC_I64x2GtU:
-    case kPPC_I64x2GeU:
     case kPPC_I64x2GeS:
     case kPPC_I64x2Shl:
     case kPPC_I64x2ShrS:
@@ -334,7 +326,9 @@ int InstructionScheduler::GetTargetInstructionFlags(
     case kPPC_LoadWordU16:
     case kPPC_LoadWordS32:
     case kPPC_LoadWordU32:
+    case kPPC_LoadByteRev32:
     case kPPC_LoadWord64:
+    case kPPC_LoadByteRev64:
     case kPPC_LoadFloat32:
     case kPPC_LoadDouble:
     case kPPC_LoadSimd128:
@@ -367,7 +361,9 @@ int InstructionScheduler::GetTargetInstructionFlags(
     case kPPC_StoreWord8:
     case kPPC_StoreWord16:
     case kPPC_StoreWord32:
+    case kPPC_StoreByteRev32:
     case kPPC_StoreWord64:
+    case kPPC_StoreByteRev64:
     case kPPC_StoreFloat32:
     case kPPC_StoreDouble:
     case kPPC_StoreSimd128:

@@ -74,7 +74,7 @@ class FieldStatsCollector : public ObjectVisitor {
       raw_fields_count_in_object -= kDoubleSize / kTaggedSize;
       *boxed_double_fields_count_ += 1;
     } else if (host.IsSeqString()) {
-      int string_data = SeqString::cast(host).synchronized_length() *
+      int string_data = SeqString::cast(host).length(kAcquireLoad) *
                         (String::cast(host).IsOneByteRepresentation() ? 1 : 2) /
                         kTaggedSize;
       DCHECK_LE(string_data, raw_fields_count_in_object);
@@ -100,6 +100,10 @@ class FieldStatsCollector : public ObjectVisitor {
 
   void VisitEmbeddedPointer(Code host, RelocInfo* rinfo) override {
     *tagged_fields_count_ += 1;
+  }
+
+  void VisitMapPointer(HeapObject host) override {
+    // Just do nothing, but avoid the inherited UNREACHABLE implementation.
   }
 
  private:
@@ -181,7 +185,7 @@ V8_NOINLINE static void PrintJSONArray(size_t* array, const int len) {
 
 V8_NOINLINE static void DumpJSONArray(std::stringstream& stream, size_t* array,
                                       const int len) {
-  stream << PrintCollection(Vector<size_t>(array, len));
+  stream << PrintCollection(base::Vector<size_t>(array, len));
 }
 
 void ObjectStats::PrintKeyAndId(const char* key, int gc_count) {

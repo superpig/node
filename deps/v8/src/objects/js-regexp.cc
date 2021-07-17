@@ -4,6 +4,7 @@
 
 #include "src/objects/js-regexp.h"
 
+#include "src/base/strings.h"
 #include "src/common/globals.h"
 #include "src/objects/js-array-inl.h"
 #include "src/objects/js-regexp-inl.h"
@@ -151,6 +152,27 @@ JSRegExp::Flags JSRegExp::FlagsFromString(Isolate* isolate,
 }
 
 // static
+Handle<String> JSRegExp::StringFromFlags(Isolate* isolate,
+                                         JSRegExp::Flags flags) {
+  // Ensure that this function is up-to-date with the supported flag options.
+  constexpr size_t kFlagCount = JSRegExp::kFlagCount;
+  STATIC_ASSERT(kFlagCount == 8);
+
+  // Translate to the lexicographically smaller string.
+  int cursor = 0;
+  char buffer[kFlagCount] = {'\0'};
+  if (flags & JSRegExp::kHasIndices) buffer[cursor++] = 'd';
+  if (flags & JSRegExp::kGlobal) buffer[cursor++] = 'g';
+  if (flags & JSRegExp::kIgnoreCase) buffer[cursor++] = 'i';
+  if (flags & JSRegExp::kLinear) buffer[cursor++] = 'l';
+  if (flags & JSRegExp::kMultiline) buffer[cursor++] = 'm';
+  if (flags & JSRegExp::kDotAll) buffer[cursor++] = 's';
+  if (flags & JSRegExp::kUnicode) buffer[cursor++] = 'u';
+  if (flags & JSRegExp::kSticky) buffer[cursor++] = 'y';
+  return isolate->factory()->NewStringFromAsciiChecked(buffer);
+}
+
+// static
 MaybeHandle<JSRegExp> JSRegExp::New(Isolate* isolate, Handle<String> pattern,
                                     Flags flags, uint32_t backtrack_limit) {
   Handle<JSFunction> constructor = isolate->regexp_function();
@@ -162,7 +184,9 @@ MaybeHandle<JSRegExp> JSRegExp::New(Isolate* isolate, Handle<String> pattern,
 
 Object JSRegExp::Code(bool is_latin1) const {
   DCHECK_EQ(TypeTag(), JSRegExp::IRREGEXP);
-  return DataAt(code_index(is_latin1));
+  Object value = DataAt(code_index(is_latin1));
+  DCHECK_IMPLIES(V8_EXTERNAL_CODE_SPACE_BOOL, value.IsSmi() || value.IsCodeT());
+  return value;
 }
 
 Object JSRegExp::Bytecode(bool is_latin1) const {
@@ -250,7 +274,7 @@ int CountAdditionalEscapeChars(Handle<String> source, bool* needs_escapes_out) {
   int escapes = 0;
   bool needs_escapes = false;
   bool in_char_class = false;
-  Vector<const Char> src = source->GetCharVector<Char>(no_gc);
+  base::Vector<const Char> src = source->GetCharVector<Char>(no_gc);
   for (int i = 0; i < src.length(); i++) {
     const Char c = src[i];
     if (c == '\\') {
@@ -293,7 +317,7 @@ int CountAdditionalEscapeChars(Handle<String> source, bool* needs_escapes_out) {
 }
 
 template <typename Char>
-void WriteStringToCharVector(Vector<Char> v, int* d, const char* string) {
+void WriteStringToCharVector(base::Vector<Char> v, int* d, const char* string) {
   int s = 0;
   while (string[s] != '\0') v[(*d)++] = string[s++];
 }
@@ -302,8 +326,8 @@ template <typename Char, typename StringType>
 Handle<StringType> WriteEscapedRegExpSource(Handle<String> source,
                                             Handle<StringType> result) {
   DisallowGarbageCollection no_gc;
-  Vector<const Char> src = source->GetCharVector<Char>(no_gc);
-  Vector<Char> dst(result->GetChars(no_gc), result->length());
+  base::Vector<const Char> src = source->GetCharVector<Char>(no_gc);
+  base::Vector<Char> dst(result->GetChars(no_gc), result->length());
   int s = 0;
   int d = 0;
   bool in_char_class = false;
@@ -360,7 +384,7 @@ MaybeHandle<String> EscapeRegExpSource(Isolate* isolate,
   bool needs_escapes = false;
   int additional_escape_chars =
       one_byte ? CountAdditionalEscapeChars<uint8_t>(source, &needs_escapes)
-               : CountAdditionalEscapeChars<uc16>(source, &needs_escapes);
+               : CountAdditionalEscapeChars<base::uc16>(source, &needs_escapes);
   if (!needs_escapes) return source;
   int length = source->length() + additional_escape_chars;
   if (one_byte) {
@@ -374,7 +398,7 @@ MaybeHandle<String> EscapeRegExpSource(Isolate* isolate,
     ASSIGN_RETURN_ON_EXCEPTION(isolate, result,
                                isolate->factory()->NewRawTwoByteString(length),
                                String);
-    return WriteEscapedRegExpSource<uc16>(source, result);
+    return WriteEscapedRegExpSource<base::uc16>(source, result);
   }
 }
 

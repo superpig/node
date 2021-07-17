@@ -241,7 +241,9 @@ class Range {
 class DeferredBlocksRegion final {
  public:
   explicit DeferredBlocksRegion(Zone* zone, int number_of_blocks)
-      : spilled_vregs_(zone), blocks_covered_(number_of_blocks, zone) {}
+      : spilled_vregs_(zone),
+        blocks_covered_(number_of_blocks, zone),
+        is_frozen_(false) {}
 
   void AddBlock(RpoNumber block, MidTierRegisterAllocationData* data) {
     DCHECK(data->GetBlock(block)->IsDeferred());
@@ -249,9 +251,17 @@ class DeferredBlocksRegion final {
     data->block_state(block).set_deferred_blocks_region(this);
   }
 
-  // Adds |vreg| to the list of variables to potentially defer their output to
-  // a spill slot until we enter this deferred block region.
-  void DeferSpillOutputUntilEntry(int vreg) { spilled_vregs_.insert(vreg); }
+  // Trys to adds |vreg| to the list of variables to potentially defer their
+  // output to a spill slot until we enter this deferred block region. Returns
+  // true if successful.
+  bool TryDeferSpillOutputUntilEntry(int vreg) {
+    if (spilled_vregs_.count(vreg) != 0) return true;
+    if (is_frozen_) return false;
+    spilled_vregs_.insert(vreg);
+    return true;
+  }
+
+  void FreezeDeferredSpills() { is_frozen_ = true; }
 
   ZoneSet<int>::const_iterator begin() const { return spilled_vregs_.begin(); }
   ZoneSet<int>::const_iterator end() const { return spilled_vregs_.end(); }
@@ -261,6 +271,7 @@ class DeferredBlocksRegion final {
  private:
   ZoneSet<int> spilled_vregs_;
   BitVector blocks_covered_;
+  bool is_frozen_;
 };
 
 // VirtualRegisterData stores data specific to a particular virtual register,
@@ -477,7 +488,8 @@ class VirtualRegisterData final {
   void AddSpillUse(int instr_index, MidTierRegisterAllocationData* data);
   void AddPendingSpillOperand(PendingOperand* pending_operand);
   void EnsureSpillRange(MidTierRegisterAllocationData* data);
-  bool CouldSpillOnEntryToDeferred(const InstructionBlock* block);
+  bool TrySpillOnEntryToDeferred(MidTierRegisterAllocationData* data,
+                                 const InstructionBlock* block);
 
   InstructionOperand* spill_operand_;
   SpillRange* spill_range_;
@@ -586,13 +598,7 @@ void VirtualRegisterData::AddSpillUse(int instr_index,
   spill_range_->ExtendRangeTo(instr_index);
 
   const InstructionBlock* block = data->GetBlock(instr_index);
-  if (CouldSpillOnEntryToDeferred(block)) {
-    // TODO(1180335): Remove once crbug.com/1180335 is fixed.
-    CHECK(HasSpillRange());
-    data->block_state(block->rpo_number())
-        .deferred_blocks_region()
-        ->DeferSpillOutputUntilEntry(vreg());
-  } else {
+  if (!TrySpillOnEntryToDeferred(data, block)) {
     MarkAsNeedsSpillAtOutput();
   }
 }
@@ -604,18 +610,22 @@ void VirtualRegisterData::AddDeferredSpillUse(
   AddSpillUse(instr_index, data);
 }
 
-bool VirtualRegisterData::CouldSpillOnEntryToDeferred(
-    const InstructionBlock* block) {
-  return !NeedsSpillAtOutput() && block->IsDeferred() &&
-         !is_defined_in_deferred_block() && !is_constant();
+bool VirtualRegisterData::TrySpillOnEntryToDeferred(
+    MidTierRegisterAllocationData* data, const InstructionBlock* block) {
+  BlockState& block_state = data->block_state(block->rpo_number());
+  if (!NeedsSpillAtOutput() && block->IsDeferred() &&
+      !is_defined_in_deferred_block() && !is_constant()) {
+    return block_state.deferred_blocks_region()->TryDeferSpillOutputUntilEntry(
+        vreg());
+  }
+  return false;
 }
 
 void VirtualRegisterData::AddDeferredSpillOutput(
     AllocatedOperand allocated_op, int instr_index,
     MidTierRegisterAllocationData* data) {
   DCHECK(!NeedsSpillAtOutput());
-  // TODO(1180335): Make DCHECK once crbug.com/1180335 is fixed.
-  CHECK(HasSpillRange());
+  DCHECK(HasSpillRange());
   spill_range_->AddDeferredSpillOutput(allocated_op, instr_index, data);
 }
 
@@ -937,9 +947,8 @@ void RegisterState::Register::Use(int virtual_register, int instr_index) {
   // A register can have many pending uses, but should only ever have a single
   // non-pending use, since any subsiquent use will commit the preceeding use
   // first.
-  // TODO(1180335): Make DCHECK once crbug.com/1180335 is fixed.
-  CHECK(!is_allocated());
-  CHECK(!is_shared());
+  DCHECK(!is_allocated());
+  DCHECK(!is_shared());
   needs_gap_move_on_spill_ = true;
   virtual_register_ = virtual_register;
   last_use_instr_index_ = instr_index;
@@ -950,8 +959,7 @@ void RegisterState::Register::PendingUse(InstructionOperand* operand,
                                          int virtual_register,
                                          bool can_be_constant,
                                          int instr_index) {
-  // TODO(1180335): Make DCHECK once crbug.com/1180335 is fixed.
-  CHECK(!was_spilled_while_shared());
+  DCHECK(!was_spilled_while_shared());
   if (!is_allocated()) {
     virtual_register_ = virtual_register;
     last_use_instr_index_ = instr_index;
@@ -972,8 +980,7 @@ void RegisterState::Register::MarkAsPhiMove() {
 
 void RegisterState::Register::AddDeferredBlockSpill(int instr_index,
                                                     bool on_exit, Zone* zone) {
-  // TODO(1180335): Make DCHECK once crbug.com/1180335 is fixed.
-  CHECK(is_allocated());
+  DCHECK(is_allocated());
   if (!deferred_block_spills_) {
     deferred_block_spills_.emplace(zone);
   }
@@ -981,16 +988,14 @@ void RegisterState::Register::AddDeferredBlockSpill(int instr_index,
 }
 
 void RegisterState::Register::AddSharedUses(int shared_use_count) {
-  // TODO(1180335): Make DCHECK once crbug.com/1180335 is fixed.
-  CHECK(!was_spilled_while_shared());
+  DCHECK(!was_spilled_while_shared());
   is_shared_ = true;
   num_commits_required_ += shared_use_count;
 }
 
 void RegisterState::Register::CommitAtMerge() {
-  // TODO(1180335): Make DCHECK once crbug.com/1180335 is fixed.
-  CHECK(is_shared());
-  CHECK(is_allocated());
+  DCHECK(is_shared());
+  DCHECK(is_allocated());
   --num_commits_required_;
   // We should still have commits required that will be resolved in the merge
   // block.
@@ -999,9 +1004,8 @@ void RegisterState::Register::CommitAtMerge() {
 
 void RegisterState::Register::Commit(AllocatedOperand allocated_op,
                                      MidTierRegisterAllocationData* data) {
-  // TODO(1180335): Make DCHECK once crbug.com/1180335 is fixed.
-  CHECK(is_allocated());
-  CHECK_GT(num_commits_required_, 0);
+  DCHECK(is_allocated());
+  DCHECK_GT(num_commits_required_, 0);
 
   if (--num_commits_required_ == 0) {
     // Allocate all pending uses to |allocated_op| if this commit is non-shared,
@@ -1038,8 +1042,7 @@ void RegisterState::Register::Commit(AllocatedOperand allocated_op,
       vreg_data.EmitDeferredSpillOutputs(data);
     }
   }
-  // TODO(1180335): Make DCHECK once crbug.com/1180335 is fixed.
-  CHECK_IMPLIES(num_commits_required_ > 0, is_shared());
+  DCHECK_IMPLIES(num_commits_required_ > 0, is_shared());
 }
 
 void RegisterState::Register::Spill(AllocatedOperand allocated_op,
@@ -1106,9 +1109,8 @@ void RegisterState::Register::SpillPendingUses(
 void RegisterState::Register::SpillForDeferred(
     AllocatedOperand allocated, int instr_index,
     MidTierRegisterAllocationData* data) {
-  // TODO(1180335): Make DCHECK once crbug.com/1180335 is fixed.
-  CHECK(is_allocated());
-  CHECK(is_shared());
+  DCHECK(is_allocated());
+  DCHECK(is_shared());
   // Add a pending deferred spill, then commit the register (with the commit
   // being fullfilled by the deferred spill if the register is fully commited).
   data->VirtualRegisterDataFor(virtual_register())
@@ -1120,8 +1122,7 @@ void RegisterState::Register::SpillForDeferred(
 void RegisterState::Register::MoveToSpillSlotOnDeferred(
     int virtual_register, int instr_index,
     MidTierRegisterAllocationData* data) {
-  // TODO(1180335): Make DCHECK once crbug.com/1180335 is fixed.
-  CHECK(!was_spilled_while_shared());
+  DCHECK(!was_spilled_while_shared());
   if (!is_allocated()) {
     virtual_register_ = virtual_register;
     last_use_instr_index_ = instr_index;
@@ -2168,8 +2169,7 @@ void SinglePassRegisterAllocator::AllocateDeferredBlockSpillOutput(
     int instr_index, RpoNumber deferred_block,
     VirtualRegisterData& virtual_register) {
   DCHECK(data()->GetBlock(deferred_block)->IsDeferred());
-  // TODO(1180335): Make DCHECK once crbug.com/1180335 is fixed.
-  CHECK(virtual_register.HasSpillRange());
+  DCHECK(virtual_register.HasSpillRange());
   if (!virtual_register.NeedsSpillAtOutput() &&
       !DefinedAfter(virtual_register.vreg(), instr_index, UsePosition::kEnd)) {
     // If a register has been assigned to the virtual register, and the virtual
@@ -2830,8 +2830,13 @@ void MidTierRegisterAllocator::AllocateRegisters(
     for (RpoNumber successor : block->successors()) {
       if (!data()->GetBlock(successor)->IsDeferred()) continue;
       DCHECK_GT(successor, block_rpo);
-      for (const int virtual_register :
-           *data()->block_state(successor).deferred_blocks_region()) {
+      DeferredBlocksRegion* deferred_region =
+          data()->block_state(successor).deferred_blocks_region();
+      // Freeze the deferred spills on the region to ensure no more are added to
+      // this region after the spills for this entry point have already been
+      // emitted.
+      deferred_region->FreezeDeferredSpills();
+      for (const int virtual_register : *deferred_region) {
         VirtualRegisterData& vreg_data =
             VirtualRegisterDataFor(virtual_register);
         AllocatorFor(vreg_data.rep())

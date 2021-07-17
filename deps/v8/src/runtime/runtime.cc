@@ -209,6 +209,7 @@ bool Runtime::IsAllowListedForFuzzing(FunctionId id) {
     case Runtime::kOptimizeFunctionOnNextCall:
     case Runtime::kOptimizeOsr:
     case Runtime::kPrepareFunctionForOptimization:
+    case Runtime::kPretenureAllocationSite:
     case Runtime::kSetAllocationTimeout:
     case Runtime::kSimulateNewspaceFull:
       return true;
@@ -218,8 +219,10 @@ bool Runtime::IsAllowListedForFuzzing(FunctionId id) {
     case Runtime::kGetOptimizationStatus:
     case Runtime::kHeapObjectVerify:
     case Runtime::kIsBeingInterpreted:
+    case Runtime::kVerifyType:
       return !FLAG_allow_natives_for_differential_fuzzing;
     case Runtime::kCompileBaseline:
+    case Runtime::kBaselineOsr:
       return FLAG_sparkplug;
     default:
       return false;
@@ -261,8 +264,8 @@ const Runtime::Function* Runtime::RuntimeFunctionTable(Isolate* isolate) {
   if (!isolate->runtime_state()->redirected_intrinsic_functions()) {
     size_t function_count = arraysize(kIntrinsicFunctions);
     Function* redirected_functions = new Function[function_count];
-    base::Memcpy(redirected_functions, kIntrinsicFunctions,
-                 sizeof(kIntrinsicFunctions));
+    memcpy(redirected_functions, kIntrinsicFunctions,
+           sizeof(kIntrinsicFunctions));
     for (size_t i = 0; i < function_count; i++) {
       ExternalReference redirected_entry =
           ExternalReference::Create(static_cast<Runtime::FunctionId>(i));

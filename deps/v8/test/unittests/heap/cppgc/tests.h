@@ -76,10 +76,30 @@ class TestWithHeap : public TestWithPlatform {
         "Testing", cppgc::Heap::StackState::kNoHeapPointers);
   }
 
+  void ConservativeGC() {
+    heap_->ForceGarbageCollectionSlow(
+        ::testing::UnitTest::GetInstance()->current_test_info()->name(),
+        "Testing", cppgc::Heap::StackState::kMayContainHeapPointers);
+  }
+
+  // GC that also discards unused memory and thus changes the resident size
+  // size of the heap and corresponding pages.
+  void ConservativeMemoryDiscardingGC() {
+    internal::Heap::From(GetHeap())->CollectGarbage(
+        {GarbageCollector::Config::CollectionType::kMajor,
+         Heap::StackState::kMayContainHeapPointers, Heap::MarkingType::kAtomic,
+         Heap::SweepingType::kAtomic,
+         GarbageCollector::Config::FreeMemoryHandling::kDiscardWherePossible});
+  }
+
   cppgc::Heap* GetHeap() const { return heap_.get(); }
 
   cppgc::AllocationHandle& GetAllocationHandle() const {
     return allocation_handle_;
+  }
+
+  cppgc::HeapHandle& GetHeapHandle() const {
+    return GetHeap()->GetHeapHandle();
   }
 
   std::unique_ptr<MarkerBase>& GetMarkerRef() {

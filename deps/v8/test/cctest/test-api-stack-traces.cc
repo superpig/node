@@ -2,9 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "test/cctest/test-api.h"
-
 #include "src/api/api-inl.h"
+#include "src/base/strings.h"
+#include "test/cctest/test-api.h"
 
 using ::v8::Array;
 using ::v8::Context;
@@ -714,10 +714,10 @@ TEST(SourceURLInStackTrace) {
       "}\n"
       "eval('(' + outer +')()%s');";
 
-  i::ScopedVector<char> code(1024);
-  i::SNPrintF(code, source, "//# sourceURL=eval_url");
+  v8::base::ScopedVector<char> code(1024);
+  v8::base::SNPrintF(code, source, "//# sourceURL=eval_url");
   CHECK(CompileRun(code.begin())->IsUndefined());
-  i::SNPrintF(code, source, "//@ sourceURL=eval_url");
+  v8::base::SNPrintF(code, source, "//@ sourceURL=eval_url");
   CHECK(CompileRun(code.begin())->IsUndefined());
 }
 
@@ -792,10 +792,10 @@ TEST(InlineScriptWithSourceURLInStackTrace) {
       "}\n"
       "outer()\n%s";
 
-  i::ScopedVector<char> code(1024);
-  i::SNPrintF(code, source, "//# sourceURL=source_url");
+  v8::base::ScopedVector<char> code(1024);
+  v8::base::SNPrintF(code, source, "//# sourceURL=source_url");
   CHECK(CompileRunWithOrigin(code.begin(), "url", 0, 1)->IsUndefined());
-  i::SNPrintF(code, source, "//@ sourceURL=source_url");
+  v8::base::SNPrintF(code, source, "//@ sourceURL=source_url");
   CHECK(CompileRunWithOrigin(code.begin(), "url", 0, 1)->IsUndefined());
 }
 
@@ -836,10 +836,10 @@ TEST(DynamicWithSourceURLInStackTrace) {
       "}\n"
       "outer()\n%s";
 
-  i::ScopedVector<char> code(1024);
-  i::SNPrintF(code, source, "//# sourceURL=source_url");
+  v8::base::ScopedVector<char> code(1024);
+  v8::base::SNPrintF(code, source, "//# sourceURL=source_url");
   CHECK(CompileRunWithOrigin(code.begin(), "url", 0, 0)->IsUndefined());
-  i::SNPrintF(code, source, "//@ sourceURL=source_url");
+  v8::base::SNPrintF(code, source, "//@ sourceURL=source_url");
   CHECK(CompileRunWithOrigin(code.begin(), "url", 0, 0)->IsUndefined());
 }
 
@@ -856,8 +856,8 @@ TEST(DynamicWithSourceURLInStackTraceString) {
       "}\n"
       "outer()\n%s";
 
-  i::ScopedVector<char> code(1024);
-  i::SNPrintF(code, source, "//# sourceURL=source_url");
+  v8::base::ScopedVector<char> code(1024);
+  v8::base::SNPrintF(code, source, "//# sourceURL=source_url");
   v8::TryCatch try_catch(context->GetIsolate());
   CompileRunWithOrigin(code.begin(), "", 0, 0);
   CHECK(try_catch.HasCaught());
@@ -867,14 +867,22 @@ TEST(DynamicWithSourceURLInStackTraceString) {
   CHECK_NOT_NULL(strstr(*stack, "at foo (source_url:3:5)"));
 }
 
-TEST(CaptureStackTraceForStackOverflow) {
+UNINITIALIZED_TEST(CaptureStackTraceForStackOverflow) {
+  // We must set FLAG_stack_size before initializing the isolate.
   v8::internal::FLAG_stack_size = 150;
-  LocalContext current;
-  v8::Isolate* isolate = current->GetIsolate();
-  v8::HandleScope scope(isolate);
-  isolate->SetCaptureStackTraceForUncaughtExceptions(true, 10,
-                                                     v8::StackTrace::kDetailed);
-  v8::TryCatch try_catch(isolate);
-  CompileRun("(function f(x) { f(x+1); })(0)");
-  CHECK(try_catch.HasCaught());
+  v8::Isolate::CreateParams create_params;
+  create_params.array_buffer_allocator = CcTest::array_buffer_allocator();
+  v8::Isolate* isolate = v8::Isolate::New(create_params);
+  isolate->Enter();
+  {
+    LocalContext current(isolate);
+    v8::HandleScope scope(isolate);
+    isolate->SetCaptureStackTraceForUncaughtExceptions(
+        true, 10, v8::StackTrace::kDetailed);
+    v8::TryCatch try_catch(isolate);
+    CompileRun("(function f(x) { f(x+1); })(0)");
+    CHECK(try_catch.HasCaught());
+  }
+  isolate->Exit();
+  isolate->Dispose();
 }

@@ -7,13 +7,15 @@
 
 // TODO(v8:11421): Remove #if once baseline compiler is ported to other
 // architectures.
-#if V8_TARGET_ARCH_IA32 || V8_TARGET_ARCH_X64 || V8_TARGET_ARCH_ARM64 || \
-    V8_TARGET_ARCH_ARM
+#if V8_TARGET_ARCH_IA32 || V8_TARGET_ARCH_X64 || V8_TARGET_ARCH_ARM64 ||     \
+    V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_RISCV64 || V8_TARGET_ARCH_MIPS64 || \
+    V8_TARGET_ARCH_MIPS
 
 #include <type_traits>
 #include <unordered_map>
 
 #include "src/baseline/baseline-assembler.h"
+#include "src/codegen/interface-descriptors-inl.h"
 #include "src/interpreter/bytecode-register.h"
 #include "src/objects/feedback-cell.h"
 #include "src/objects/js-function.h"
@@ -27,6 +29,12 @@
 #include "src/baseline/ia32/baseline-assembler-ia32-inl.h"
 #elif V8_TARGET_ARCH_ARM
 #include "src/baseline/arm/baseline-assembler-arm-inl.h"
+#elif V8_TARGET_ARCH_RISCV64
+#include "src/baseline/riscv64/baseline-assembler-riscv64-inl.h"
+#elif V8_TARGET_ARCH_MIPS64
+#include "src/baseline/mips64/baseline-assembler-mips64-inl.h"
+#elif V8_TARGET_ARCH_MIPS
+#include "src/baseline/mips/baseline-assembler-mips-inl.h"
 #else
 #error Unsupported target architecture.
 #endif
@@ -41,10 +49,10 @@ void BaselineAssembler::GetCode(Isolate* isolate, CodeDesc* desc) {
   __ GetCode(isolate, desc);
 }
 int BaselineAssembler::pc_offset() const { return __ pc_offset(); }
-bool BaselineAssembler::emit_debug_code() const { return __ emit_debug_code(); }
 void BaselineAssembler::CodeEntry() const { __ CodeEntry(); }
 void BaselineAssembler::ExceptionHandler() const { __ ExceptionHandler(); }
 void BaselineAssembler::RecordComment(const char* string) {
+  if (!FLAG_code_comments) return;
   __ RecordComment(string);
 }
 void BaselineAssembler::Trap() { __ Trap(); }

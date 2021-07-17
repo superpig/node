@@ -12,7 +12,7 @@
 #include "src/heap/read-only-heap.h"
 #include "src/ic/handler-configuration-inl.h"
 #include "src/init/bootstrapper.h"
-#include "src/logging/counters.h"
+#include "src/logging/runtime-call-stats-scope.h"
 #include "src/objects/allocation-site-inl.h"
 #include "src/objects/arguments-inl.h"
 #include "src/objects/bigint.h"
@@ -61,6 +61,7 @@
 #include "src/objects/js-weak-refs-inl.h"
 #include "src/objects/literal-objects-inl.h"
 #include "src/objects/maybe-object.h"
+#include "src/objects/megadom-handler-inl.h"
 #include "src/objects/microtask-inl.h"
 #include "src/objects/module-inl.h"
 #include "src/objects/oddball-inl.h"
@@ -78,6 +79,7 @@
 #include "torque-generated/class-verifiers.h"
 
 #if V8_ENABLE_WEBASSEMBLY
+#include "src/base/strings.h"
 #include "src/debug/debug-wasm-objects-inl.h"
 #include "src/wasm/wasm-objects-inl.h"
 #endif  // V8_ENABLE_WEBASSEMBLY
@@ -115,7 +117,7 @@ namespace internal {
   }
 
 void Object::ObjectVerify(Isolate* isolate) {
-  RuntimeCallTimerScope timer(isolate, RuntimeCallCounterId::kObjectVerify);
+  RCS_SCOPE(isolate, RuntimeCallCounterId::kObjectVerify);
   if (IsSmi()) {
     Smi::cast(*this).SmiVerify(isolate);
   } else {
@@ -132,12 +134,24 @@ void Object::VerifyPointer(Isolate* isolate, Object p) {
   }
 }
 
+void Object::VerifyAnyTagged(Isolate* isolate, Object p) {
+  if (p.IsHeapObject()) {
+    if (V8_EXTERNAL_CODE_SPACE_BOOL) {
+      CHECK(IsValidHeapObject(isolate->heap(), HeapObject::cast(p)));
+    } else {
+      HeapObject::VerifyHeapPointer(isolate, p);
+    }
+  } else {
+    CHECK(p.IsSmi());
+  }
+}
+
 void MaybeObject::VerifyMaybeObjectPointer(Isolate* isolate, MaybeObject p) {
   HeapObject heap_object;
   if (p->GetHeapObject(&heap_object)) {
     HeapObject::VerifyHeapPointer(isolate, heap_object);
   } else {
-    CHECK(p->IsSmi() || p->IsCleared());
+    CHECK(p->IsSmi() || p->IsCleared() || MapWord::IsPacked(p->ptr()));
   }
 }
 
@@ -291,6 +305,14 @@ void HeapObject::HeapObjectVerify(Isolate* isolate) {
 void HeapObject::VerifyHeapPointer(Isolate* isolate, Object p) {
   CHECK(p.IsHeapObject());
   CHECK(IsValidHeapObject(isolate->heap(), HeapObject::cast(p)));
+  CHECK_IMPLIES(V8_EXTERNAL_CODE_SPACE_BOOL, !p.IsCode());
+}
+
+// static
+void HeapObject::VerifyCodePointer(Isolate* isolate, Object p) {
+  CHECK(p.IsHeapObject());
+  CHECK(isolate->heap()->InCodeSpace(HeapObject::cast(p)));
+  CHECK(HeapObject::cast(p).IsCode());
 }
 
 void Symbol::SymbolVerify(Isolate* isolate) {
@@ -457,7 +479,11 @@ void Map::MapVerify(Isolate* isolate) {
         (kTaggedSize <= instance_size() &&
          static_cast<size_t>(instance_size()) < heap->Capacity()));
   if (IsContextMap()) {
-    CHECK(native_context().IsNativeContext());
+    // The map for the NativeContext is allocated before the NativeContext
+    // itself, so it may happen that during a GC the native_context() is still
+    // null.
+    CHECK(native_context_or_null().IsNull() ||
+          native_context().IsNativeContext());
   } else {
     if (GetBackPointer().IsUndefined(isolate)) {
       // Root maps must not have descriptors in the descriptor array that do not
@@ -675,7 +701,7 @@ void SloppyArgumentsElementsVerify(Isolate* isolate,
   for (int i = 0; i < nofMappedParameters; i++) {
     // Verify that each context-mapped argument is either the hole or a valid
     // Smi within context length range.
-    Object mapped = elements.mapped_entries(i);
+    Object mapped = elements.mapped_entries(i, kRelaxedLoad);
     if (mapped.IsTheHole(isolate)) {
       // Slow sloppy arguments can be holey.
       if (!is_fast) continue;
@@ -807,8 +833,8 @@ void JSBoundFunction::JSBoundFunctionVerify(Isolate* isolate) {
 
 void JSFunction::JSFunctionVerify(Isolate* isolate) {
   TorqueGeneratedClassVerifiers::JSFunctionVerify(*this, isolate);
-  CHECK(code().IsCode());
-  CHECK(map().is_callable());
+  CHECK(raw_code(isolate).IsCodeT());
+  CHECK(map(isolate).is_callable());
   Handle<JSFunction> function(*this, isolate);
   LookupIterator it(isolate, function, isolate->factory()->prototype_string(),
                     LookupIterator::OWN_SKIP_INTERCEPTOR);
@@ -828,7 +854,6 @@ void JSFunction::JSFunctionVerify(Isolate* isolate) {
 
 void SharedFunctionInfo::SharedFunctionInfoVerify(Isolate* isolate) {
   // TODO(leszeks): Add a TorqueGeneratedClassVerifier for LocalIsolate.
-  TorqueGeneratedClassVerifiers::SharedFunctionInfoVerify(*this, isolate);
   this->SharedFunctionInfoVerify(ReadOnlyRoots(isolate));
 }
 
@@ -882,8 +907,8 @@ void SharedFunctionInfo::SharedFunctionInfoVerify(ReadOnlyRoots roots) {
   } else if (!HasBuiltinId()) {
     CHECK(!construct_as_builtin());
   } else {
-    int id = builtin_id();
-    if (id != Builtins::kCompileLazy && id != Builtins::kEmptyFunction) {
+    if (builtin_id() != Builtin::kCompileLazy &&
+        builtin_id() != Builtin::kEmptyFunction) {
       CHECK(construct_as_builtin());
     } else {
       CHECK(!construct_as_builtin());
@@ -964,7 +989,13 @@ void PropertyCell::PropertyCellVerify(Isolate* isolate) {
 void CodeDataContainer::CodeDataContainerVerify(Isolate* isolate) {
   CHECK(IsCodeDataContainer());
   VerifyObjectField(isolate, kNextCodeLinkOffset);
-  CHECK(next_code_link().IsCode() || next_code_link().IsUndefined(isolate));
+  CHECK(next_code_link().IsCodeT() || next_code_link().IsUndefined(isolate));
+  if (V8_EXTERNAL_CODE_SPACE_BOOL) {
+    if (raw_code() != Smi::zero()) {
+      CHECK_EQ(code().InstructionStart(), code_entry_point());
+      CHECK_EQ(code().code_data_container(kAcquireLoad), *this);
+    }
+  }
 }
 
 void Code::CodeVerify(Isolate* isolate) {
@@ -980,25 +1011,31 @@ void Code::CodeVerify(Isolate* isolate) {
                 IsAligned(InstructionStart(), kCodeAlignment));
   CHECK_IMPLIES(!ReadOnlyHeap::Contains(*this),
                 IsAligned(raw_instruction_start(), kCodeAlignment));
+  if (V8_EXTERNAL_CODE_SPACE_BOOL) {
+    CHECK_EQ(*this, code_data_container(kAcquireLoad).code());
+  }
   // TODO(delphick): Refactor Factory::CodeBuilder::BuildInternal, so that the
   // following CHECK works builtin trampolines. It currently fails because
   // CodeVerify is called halfway through constructing the trampoline and so not
   // everything is set up.
   // CHECK_EQ(ReadOnlyHeap::Contains(*this), !IsExecutable());
-  relocation_info().ObjectVerify(isolate);
+  HeapObject relocation_info = relocation_info_or_undefined();
+  if (!relocation_info.IsUndefined()) {
+    ByteArray::cast(relocation_info).ObjectVerify(isolate);
+    Address last_gc_pc = kNullAddress;
+    for (RelocIterator it(*this); !it.done(); it.next()) {
+      it.rinfo()->Verify(isolate);
+      // Ensure that GC will not iterate twice over the same pointer.
+      if (RelocInfo::IsGCRelocMode(it.rinfo()->rmode())) {
+        CHECK(it.rinfo()->pc() != last_gc_pc);
+        last_gc_pc = it.rinfo()->pc();
+      }
+    }
+  }
+
   CHECK(V8_ENABLE_THIRD_PARTY_HEAP_BOOL ||
         CodeSize() <= MemoryChunkLayout::MaxRegularCodeObjectSize() ||
         isolate->heap()->InSpace(*this, CODE_LO_SPACE));
-  Address last_gc_pc = kNullAddress;
-
-  for (RelocIterator it(*this); !it.done(); it.next()) {
-    it.rinfo()->Verify(isolate);
-    // Ensure that GC will not iterate twice over the same pointer.
-    if (RelocInfo::IsGCRelocMode(it.rinfo()->rmode())) {
-      CHECK(it.rinfo()->pc() != last_gc_pc);
-      last_gc_pc = it.rinfo()->pc();
-    }
-  }
 }
 
 void JSArray::JSArrayVerify(Isolate* isolate) {
@@ -1335,10 +1372,10 @@ void JSRegExp::JSRegExpVerify(Isolate* isolate) {
       Object latin1_bytecode = arr.get(JSRegExp::kIrregexpLatin1BytecodeIndex);
       Object uc16_bytecode = arr.get(JSRegExp::kIrregexpUC16BytecodeIndex);
 
-      bool is_compiled = latin1_code.IsCode();
+      bool is_compiled = latin1_code.IsCodeT();
       if (is_compiled) {
-        CHECK_EQ(Code::cast(latin1_code).builtin_index(),
-                 Builtins::kRegExpExperimentalTrampoline);
+        CHECK_EQ(FromCodeT(CodeT::cast(latin1_code)).builtin_id(),
+                 Builtin::kRegExpExperimentalTrampoline);
         CHECK_EQ(uc16_code, latin1_code);
 
         CHECK(latin1_bytecode.IsByteArray());
@@ -1369,11 +1406,11 @@ void JSRegExp::JSRegExpVerify(Isolate* isolate) {
       // Code: Compiled irregexp code or trampoline to the interpreter.
       CHECK((one_byte_data.IsSmi() &&
              Smi::ToInt(one_byte_data) == JSRegExp::kUninitializedValue) ||
-            one_byte_data.IsCode());
+            one_byte_data.IsCodeT());
       Object uc16_data = arr.get(JSRegExp::kIrregexpUC16CodeIndex);
       CHECK((uc16_data.IsSmi() &&
              Smi::ToInt(uc16_data) == JSRegExp::kUninitializedValue) ||
-            uc16_data.IsCode());
+            uc16_data.IsCodeT());
 
       Object one_byte_bytecode =
           arr.get(JSRegExp::kIrregexpLatin1BytecodeIndex);
@@ -1433,7 +1470,7 @@ void JSArrayBufferView::JSArrayBufferViewVerify(Isolate* isolate) {
 
 void JSTypedArray::JSTypedArrayVerify(Isolate* isolate) {
   TorqueGeneratedClassVerifiers::JSTypedArrayVerify(*this, isolate);
-  CHECK_LE(length(), JSTypedArray::kMaxLength);
+  CHECK_LE(GetLength(), JSTypedArray::kMaxLength);
 }
 
 void JSDataView::JSDataViewVerify(Isolate* isolate) {
@@ -1596,7 +1633,6 @@ void ObjectBoilerplateDescription::ObjectBoilerplateDescriptionVerify(
 }
 
 #if V8_ENABLE_WEBASSEMBLY
-USE_TORQUE_VERIFIER(AsmWasmData)
 
 void WasmInstanceObject::WasmInstanceObjectVerify(Isolate* isolate) {
   JSObjectVerify(isolate);
@@ -1622,28 +1658,15 @@ void WasmExportedFunctionData::WasmExportedFunctionDataVerify(
   CHECK(wrapper_code().kind() == CodeKind::JS_TO_WASM_FUNCTION ||
         wrapper_code().kind() == CodeKind::C_WASM_ENTRY ||
         (wrapper_code().is_builtin() &&
-         wrapper_code().builtin_index() == Builtins::kGenericJSToWasmWrapper));
+         wrapper_code().builtin_id() == Builtin::kGenericJSToWasmWrapper));
 }
 
-USE_TORQUE_VERIFIER(WasmModuleObject)
-
-USE_TORQUE_VERIFIER(WasmTableObject)
-
-USE_TORQUE_VERIFIER(WasmMemoryObject)
-
-USE_TORQUE_VERIFIER(WasmGlobalObject)
-
-USE_TORQUE_VERIFIER(WasmExceptionObject)
-
-USE_TORQUE_VERIFIER(WasmJSFunctionData)
-
-USE_TORQUE_VERIFIER(WasmIndirectFunctionTable)
 #endif  // V8_ENABLE_WEBASSEMBLY
 
 void DataHandler::DataHandlerVerify(Isolate* isolate) {
   TorqueGeneratedClassVerifiers::DataHandlerVerify(*this, isolate);
   CHECK_IMPLIES(!smi_handler().IsSmi(),
-                smi_handler().IsCode() && IsStoreHandler());
+                IsStoreHandler() && smi_handler().IsCodeT());
   int data_count = data_field_count();
   if (data_count >= 1) {
     VerifyMaybeObjectField(isolate, kData1Offset);
@@ -1685,7 +1708,13 @@ void AllocationSite::AllocationSiteVerify(Isolate* isolate) {
 
 void Script::ScriptVerify(Isolate* isolate) {
   TorqueGeneratedClassVerifiers::ScriptVerify(*this, isolate);
-  for (int i = 0; i < shared_function_infos().length(); ++i) {
+  if V8_UNLIKELY (type() == Script::TYPE_WEB_SNAPSHOT) {
+    CHECK_LE(shared_function_info_count(), shared_function_infos().length());
+  } else {
+    // No overallocating shared_function_infos.
+    CHECK_EQ(shared_function_info_count(), shared_function_infos().length());
+  }
+  for (int i = 0; i < shared_function_info_count(); ++i) {
     MaybeObject maybe_object = shared_function_infos().Get(i);
     HeapObject heap_object;
     CHECK(maybe_object->IsWeak() || maybe_object->IsCleared() ||
@@ -1734,6 +1763,12 @@ void StackFrameInfo::StackFrameInfoVerify(Isolate* isolate) {
   CHECK_IMPLIES(IsAsync(), !IsWasm());
   CHECK_IMPLIES(IsConstructor(), !IsWasm());
 #endif  // V8_ENABLE_WEBASSEMBLY
+}
+
+void FunctionTemplateRareData::FunctionTemplateRareDataVerify(
+    Isolate* isolate) {
+  CHECK(c_function_overloads().IsFixedArray() ||
+        c_function_overloads().IsUndefined(isolate));
 }
 
 #endif  // VERIFY_HEAP
@@ -1795,6 +1830,7 @@ void JSObject::IncrementSpillStatistics(Isolate* isolate,
 #define TYPED_ARRAY_CASE(Type, type, TYPE, ctype) case TYPE##_ELEMENTS:
 
       TYPED_ARRAYS(TYPED_ARRAY_CASE)
+      RAB_GSAB_TYPED_ARRAYS(TYPED_ARRAY_CASE)
 #undef TYPED_ARRAY_CASE
       {
         info->number_of_objects_with_fast_elements_++;
@@ -1812,6 +1848,7 @@ void JSObject::IncrementSpillStatistics(Isolate* isolate,
     }
     case FAST_SLOPPY_ARGUMENTS_ELEMENTS:
     case SLOW_SLOPPY_ARGUMENTS_ELEMENTS:
+    case WASM_ARRAY_ELEMENTS:
     case NO_ELEMENTS:
       break;
   }

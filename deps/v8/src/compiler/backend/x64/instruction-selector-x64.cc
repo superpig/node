@@ -66,7 +66,8 @@ class X64OperandGenerator final : public OperandGenerator {
 
   bool CanBeMemoryOperand(InstructionCode opcode, Node* node, Node* input,
                           int effect_level) {
-    if (input->opcode() != IrOpcode::kLoad ||
+    if ((input->opcode() != IrOpcode::kLoad &&
+         input->opcode() != IrOpcode::kLoadImmutable) ||
         !selector()->CanCover(node, input)) {
       return false;
     }
@@ -122,11 +123,11 @@ class X64OperandGenerator final : public OperandGenerator {
     return false;
   }
 
-  AddressingMode GenerateMemoryOperandInputs(Node* index, int scale_exponent,
-                                             Node* base, Node* displacement,
-                                             DisplacementMode displacement_mode,
-                                             InstructionOperand inputs[],
-                                             size_t* input_count) {
+  AddressingMode GenerateMemoryOperandInputs(
+      Node* index, int scale_exponent, Node* base, Node* displacement,
+      DisplacementMode displacement_mode, InstructionOperand inputs[],
+      size_t* input_count,
+      RegisterUseKind reg_kind = RegisterUseKind::kUseRegister) {
     AddressingMode mode = kMode_MRI;
     if (base != nullptr && (index != nullptr || displacement != nullptr)) {
       if (base->opcode() == IrOpcode::kInt32Constant &&
@@ -138,10 +139,10 @@ class X64OperandGenerator final : public OperandGenerator {
       }
     }
     if (base != nullptr) {
-      inputs[(*input_count)++] = UseRegister(base);
+      inputs[(*input_count)++] = UseRegister(base, reg_kind);
       if (index != nullptr) {
         DCHECK(scale_exponent >= 0 && scale_exponent <= 3);
-        inputs[(*input_count)++] = UseRegister(index);
+        inputs[(*input_count)++] = UseRegister(index, reg_kind);
         if (displacement != nullptr) {
           inputs[(*input_count)++] = displacement_mode == kNegativeDisplacement
                                          ? UseNegatedImmediate(displacement)
@@ -168,10 +169,10 @@ class X64OperandGenerator final : public OperandGenerator {
       DCHECK(scale_exponent >= 0 && scale_exponent <= 3);
       if (displacement != nullptr) {
         if (index == nullptr) {
-          inputs[(*input_count)++] = UseRegister(displacement);
+          inputs[(*input_count)++] = UseRegister(displacement, reg_kind);
           mode = kMode_MR;
         } else {
-          inputs[(*input_count)++] = UseRegister(index);
+          inputs[(*input_count)++] = UseRegister(index, reg_kind);
           inputs[(*input_count)++] = displacement_mode == kNegativeDisplacement
                                          ? UseNegatedImmediate(displacement)
                                          : UseImmediate(displacement);
@@ -180,22 +181,22 @@ class X64OperandGenerator final : public OperandGenerator {
           mode = kMnI_modes[scale_exponent];
         }
       } else {
-        inputs[(*input_count)++] = UseRegister(index);
+        inputs[(*input_count)++] = UseRegister(index, reg_kind);
         static const AddressingMode kMn_modes[] = {kMode_MR, kMode_MR1,
                                                    kMode_M4, kMode_M8};
         mode = kMn_modes[scale_exponent];
         if (mode == kMode_MR1) {
           // [%r1 + %r1*1] has a smaller encoding than [%r1*2+0]
-          inputs[(*input_count)++] = UseRegister(index);
+          inputs[(*input_count)++] = UseRegister(index, reg_kind);
         }
       }
     }
     return mode;
   }
 
-  AddressingMode GetEffectiveAddressMemoryOperand(Node* operand,
-                                                  InstructionOperand inputs[],
-                                                  size_t* input_count) {
+  AddressingMode GetEffectiveAddressMemoryOperand(
+      Node* operand, InstructionOperand inputs[], size_t* input_count,
+      RegisterUseKind reg_kind = RegisterUseKind::kUseRegister) {
     {
       LoadMatcher<ExternalReferenceMatcher> m(operand);
       if (m.index().HasResolvedValue() && m.object().HasResolvedValue() &&
@@ -216,7 +217,7 @@ class X64OperandGenerator final : public OperandGenerator {
     if (m.displacement() == nullptr || CanBeImmediate(m.displacement())) {
       return GenerateMemoryOperandInputs(
           m.index(), m.scale(), m.base(), m.displacement(),
-          m.displacement_mode(), inputs, input_count);
+          m.displacement_mode(), inputs, input_count, reg_kind);
     } else if (m.base() == nullptr &&
                m.displacement_mode() == kPositiveDisplacement) {
       // The displacement cannot be an immediate, but we can use the
@@ -224,10 +225,10 @@ class X64OperandGenerator final : public OperandGenerator {
       // modes for the scale.
       return GenerateMemoryOperandInputs(m.index(), m.scale(), m.displacement(),
                                          nullptr, m.displacement_mode(), inputs,
-                                         input_count);
+                                         input_count, reg_kind);
     } else {
-      inputs[(*input_count)++] = UseRegister(operand->InputAt(0));
-      inputs[(*input_count)++] = UseRegister(operand->InputAt(1));
+      inputs[(*input_count)++] = UseRegister(operand->InputAt(0), reg_kind);
+      inputs[(*input_count)++] = UseRegister(operand->InputAt(1), reg_kind);
       return kMode_MR1;
     }
   }
@@ -294,10 +295,11 @@ ArchOpcode GetLoadOpcode(LoadRepresentation load_rep) {
     case MachineRepresentation::kWord64:
       opcode = kX64Movq;
       break;
-    case MachineRepresentation::kSimd128:  // Fall through.
+    case MachineRepresentation::kSimd128:
       opcode = kX64Movdqu;
       break;
-    case MachineRepresentation::kNone:
+    case MachineRepresentation::kNone:  // Fall through.
+    case MachineRepresentation::kMapWord:
       UNREACHABLE();
   }
   return opcode;
@@ -329,9 +331,10 @@ ArchOpcode GetStoreOpcode(StoreRepresentation store_rep) {
       return kX64MovqCompressTagged;
     case MachineRepresentation::kWord64:
       return kX64Movq;
-    case MachineRepresentation::kSimd128:  // Fall through.
+    case MachineRepresentation::kSimd128:
       return kX64Movdqu;
-    case MachineRepresentation::kNone:
+    case MachineRepresentation::kNone:  // Fall through.
+    case MachineRepresentation::kMapWord:
       UNREACHABLE();
   }
   UNREACHABLE();
@@ -448,11 +451,23 @@ void InstructionSelector::VisitLoadTransform(Node* node) {
 void InstructionSelector::VisitLoad(Node* node, Node* value,
                                     InstructionCode opcode) {
   X64OperandGenerator g(this);
+#ifdef V8_IS_TSAN
+  // On TSAN builds we require one scratch register. Because of this we also
+  // have to modify the inputs to take into account possible aliasing and use
+  // UseUniqueRegister which is not required for non-TSAN builds.
+  InstructionOperand temps[] = {g.TempRegister()};
+  size_t temp_count = arraysize(temps);
+  auto reg_kind = OperandGenerator::RegisterUseKind::kUseUniqueRegister;
+#else
+  InstructionOperand* temps = nullptr;
+  size_t temp_count = 0;
+  auto reg_kind = OperandGenerator::RegisterUseKind::kUseRegister;
+#endif  // V8_IS_TSAN
   InstructionOperand outputs[] = {g.DefineAsRegister(node)};
   InstructionOperand inputs[3];
   size_t input_count = 0;
   AddressingMode mode =
-      g.GetEffectiveAddressMemoryOperand(value, inputs, &input_count);
+      g.GetEffectiveAddressMemoryOperand(value, inputs, &input_count, reg_kind);
   InstructionCode code = opcode | AddressingModeField::encode(mode);
   if (node->opcode() == IrOpcode::kProtectedLoad) {
     code |= AccessModeField::encode(kMemoryAccessProtected);
@@ -460,11 +475,12 @@ void InstructionSelector::VisitLoad(Node* node, Node* value,
     CHECK_NE(poisoning_level_, PoisoningMitigationLevel::kDontPoison);
     code |= AccessModeField::encode(kMemoryAccessPoisoned);
   }
-  Emit(code, 1, outputs, input_count, inputs);
+  Emit(code, 1, outputs, input_count, inputs, temp_count, temps);
 }
 
 void InstructionSelector::VisitLoad(Node* node) {
   LoadRepresentation load_rep = LoadRepresentationOf(node->op());
+  DCHECK(!load_rep.IsMapWord());
   VisitLoad(node, node, GetLoadOpcode(load_rep));
 }
 
@@ -479,6 +495,7 @@ void InstructionSelector::VisitStore(Node* node) {
   Node* value = node->InputAt(2);
 
   StoreRepresentation store_rep = StoreRepresentationOf(node->op());
+  DCHECK_NE(store_rep.representation(), MachineRepresentation::kMapWord);
   WriteBarrierKind write_barrier_kind = store_rep.write_barrier_kind();
 
   if (FLAG_enable_unconditional_write_barriers &&
@@ -501,43 +518,71 @@ void InstructionSelector::VisitStore(Node* node) {
     code |= MiscField::encode(static_cast<int>(record_write_mode));
     Emit(code, 0, nullptr, arraysize(inputs), inputs, arraysize(temps), temps);
   } else {
-    ArchOpcode opcode = GetStoreOpcode(store_rep);
-    InstructionOperand inputs[4];
-    size_t input_count = 0;
-    AddressingMode addressing_mode =
-        g.GetEffectiveAddressMemoryOperand(node, inputs, &input_count);
-    InstructionCode code =
-        opcode | AddressingModeField::encode(addressing_mode);
     if ((ElementSizeLog2Of(store_rep.representation()) <
          kSystemPointerSizeLog2) &&
         value->opcode() == IrOpcode::kTruncateInt64ToInt32) {
       value = value->InputAt(0);
     }
-    InstructionOperand value_operand =
-        g.CanBeImmediate(value) ? g.UseImmediate(value) : g.UseRegister(value);
+#ifdef V8_IS_TSAN
+    // On TSAN builds we require two scratch registers. Because of this we also
+    // have to modify the inputs to take into account possible aliasing and use
+    // UseUniqueRegister which is not required for non-TSAN builds.
+    InstructionOperand temps[] = {g.TempRegister(), g.TempRegister()};
+    size_t temp_count = arraysize(temps);
+    auto reg_kind = OperandGenerator::RegisterUseKind::kUseUniqueRegister;
+#else
+    InstructionOperand* temps = nullptr;
+    size_t temp_count = 0;
+    auto reg_kind = OperandGenerator::RegisterUseKind::kUseRegister;
+#endif  // V8_IS_TSAN
+
+    InstructionOperand inputs[4];
+    size_t input_count = 0;
+    AddressingMode addressing_mode = g.GetEffectiveAddressMemoryOperand(
+        node, inputs, &input_count, reg_kind);
+    InstructionOperand value_operand = g.CanBeImmediate(value)
+                                           ? g.UseImmediate(value)
+                                           : g.UseRegister(value, reg_kind);
     inputs[input_count++] = value_operand;
+    ArchOpcode opcode = GetStoreOpcode(store_rep);
+    InstructionCode code =
+        opcode | AddressingModeField::encode(addressing_mode);
     Emit(code, 0, static_cast<InstructionOperand*>(nullptr), input_count,
-         inputs);
+         inputs, temp_count, temps);
   }
 }
 
 void InstructionSelector::VisitProtectedStore(Node* node) {
   X64OperandGenerator g(this);
   Node* value = node->InputAt(2);
-
   StoreRepresentation store_rep = StoreRepresentationOf(node->op());
 
-  ArchOpcode opcode = GetStoreOpcode(store_rep);
+#ifdef V8_IS_TSAN
+  // On TSAN builds we require two scratch registers. Because of this we also
+  // have to modify the inputs to take into account possible aliasing and use
+  // UseUniqueRegister which is not required for non-TSAN builds.
+  InstructionOperand temps[] = {g.TempRegister(), g.TempRegister()};
+  size_t temp_count = arraysize(temps);
+  auto reg_kind = OperandGenerator::RegisterUseKind::kUseUniqueRegister;
+#else
+  InstructionOperand* temps = nullptr;
+  size_t temp_count = 0;
+  auto reg_kind = OperandGenerator::RegisterUseKind::kUseRegister;
+#endif  // V8_IS_TSAN
+
   InstructionOperand inputs[4];
   size_t input_count = 0;
   AddressingMode addressing_mode =
-      g.GetEffectiveAddressMemoryOperand(node, inputs, &input_count);
+      g.GetEffectiveAddressMemoryOperand(node, inputs, &input_count, reg_kind);
+  InstructionOperand value_operand = g.CanBeImmediate(value)
+                                         ? g.UseImmediate(value)
+                                         : g.UseRegister(value, reg_kind);
+  inputs[input_count++] = value_operand;
+  ArchOpcode opcode = GetStoreOpcode(store_rep);
   InstructionCode code = opcode | AddressingModeField::encode(addressing_mode) |
                          AccessModeField::encode(kMemoryAccessProtected);
-  InstructionOperand value_operand =
-      g.CanBeImmediate(value) ? g.UseImmediate(value) : g.UseRegister(value);
-  inputs[input_count++] = value_operand;
-  Emit(code, 0, static_cast<InstructionOperand*>(nullptr), input_count, inputs);
+  Emit(code, 0, static_cast<InstructionOperand*>(nullptr), input_count, inputs,
+       temp_count, temps);
 }
 
 // Architecture supports unaligned access, therefore VisitLoad is used instead
@@ -704,7 +749,8 @@ void InstructionSelector::VisitStackPointerGreaterThan(
   X64OperandGenerator g(this);
   Node* const value = node->InputAt(0);
   if (g.CanBeMemoryOperand(kX64Cmp, node, value, effect_level)) {
-    DCHECK_EQ(IrOpcode::kLoad, value->opcode());
+    DCHECK(IrOpcode::kLoad == value->opcode() ||
+           IrOpcode::kLoadImmutable == value->opcode());
 
     // GetEffectiveAddressMemoryOperand can create at most 3 inputs.
     static constexpr int kMaxInputCount = 3;
@@ -726,7 +772,9 @@ namespace {
 
 bool TryMergeTruncateInt64ToInt32IntoLoad(InstructionSelector* selector,
                                           Node* node, Node* load) {
-  if (load->opcode() == IrOpcode::kLoad && selector->CanCover(node, load)) {
+  if ((load->opcode() == IrOpcode::kLoad ||
+       load->opcode() == IrOpcode::kLoadImmutable) &&
+      selector->CanCover(node, load)) {
     LoadRepresentation load_rep = LoadRepresentationOf(load->op());
     MachineRepresentation rep = load_rep.representation();
     InstructionCode opcode;
@@ -747,16 +795,27 @@ bool TryMergeTruncateInt64ToInt32IntoLoad(InstructionSelector* selector,
         break;
       default:
         UNREACHABLE();
-        return false;
     }
     X64OperandGenerator g(selector);
+#ifdef V8_IS_TSAN
+    // On TSAN builds we require one scratch register. Because of this we also
+    // have to modify the inputs to take into account possible aliasing and use
+    // UseUniqueRegister which is not required for non-TSAN builds.
+    InstructionOperand temps[] = {g.TempRegister()};
+    size_t temp_count = arraysize(temps);
+    auto reg_kind = OperandGenerator::RegisterUseKind::kUseUniqueRegister;
+#else
+    InstructionOperand* temps = nullptr;
+    size_t temp_count = 0;
+    auto reg_kind = OperandGenerator::RegisterUseKind::kUseRegister;
+#endif  // V8_IS_TSAN
     InstructionOperand outputs[] = {g.DefineAsRegister(node)};
     size_t input_count = 0;
     InstructionOperand inputs[3];
     AddressingMode mode = g.GetEffectiveAddressMemoryOperand(
-        node->InputAt(0), inputs, &input_count);
+        node->InputAt(0), inputs, &input_count, reg_kind);
     opcode |= AddressingModeField::encode(mode);
-    selector->Emit(opcode, 1, outputs, input_count, inputs);
+    selector->Emit(opcode, 1, outputs, input_count, inputs, temp_count, temps);
     return true;
   }
   return false;
@@ -901,31 +960,22 @@ inline AddressingMode AddDisplacementToAddressingMode(AddressingMode mode) {
   switch (mode) {
     case kMode_MR:
       return kMode_MRI;
-      break;
     case kMode_MR1:
       return kMode_MR1I;
-      break;
     case kMode_MR2:
       return kMode_MR2I;
-      break;
     case kMode_MR4:
       return kMode_MR4I;
-      break;
     case kMode_MR8:
       return kMode_MR8I;
-      break;
     case kMode_M1:
       return kMode_M1I;
-      break;
     case kMode_M2:
       return kMode_M2I;
-      break;
     case kMode_M4:
       return kMode_M4I;
-      break;
     case kMode_M8:
       return kMode_M8I;
-      break;
     case kMode_None:
     case kMode_MRI:
     case kMode_MR1I:
@@ -958,10 +1008,22 @@ bool TryMatchLoadWord64AndShiftRight(InstructionSelector* selector, Node* node,
                                                 AddressOption::kAllowAll);
     if (mleft.matches() && (mleft.displacement() == nullptr ||
                             g.CanBeImmediate(mleft.displacement()))) {
+#ifdef V8_IS_TSAN
+      // On TSAN builds we require one scratch register. Because of this we also
+      // have to modify the inputs to take into account possible aliasing and
+      // use UseUniqueRegister which is not required for non-TSAN builds.
+      InstructionOperand temps[] = {g.TempRegister()};
+      size_t temp_count = arraysize(temps);
+      auto reg_kind = OperandGenerator::RegisterUseKind::kUseUniqueRegister;
+#else
+      InstructionOperand* temps = nullptr;
+      size_t temp_count = 0;
+      auto reg_kind = OperandGenerator::RegisterUseKind::kUseRegister;
+#endif  // V8_IS_TSAN
       size_t input_count = 0;
       InstructionOperand inputs[3];
       AddressingMode mode = g.GetEffectiveAddressMemoryOperand(
-          m.left().node(), inputs, &input_count);
+          m.left().node(), inputs, &input_count, reg_kind);
       if (mleft.displacement() == nullptr) {
         // Make sure that the addressing mode indicates the presence of an
         // immediate displacement. It seems that we never use M1 and M2, but we
@@ -980,7 +1042,7 @@ bool TryMatchLoadWord64AndShiftRight(InstructionSelector* selector, Node* node,
       }
       InstructionOperand outputs[] = {g.DefineAsRegister(node)};
       InstructionCode code = opcode | AddressingModeField::encode(mode);
-      selector->Emit(code, 1, outputs, input_count, inputs);
+      selector->Emit(code, 1, outputs, input_count, inputs, temp_count, temps);
       return true;
     }
   }
@@ -1363,7 +1425,9 @@ void InstructionSelector::VisitChangeInt32ToInt64(Node* node) {
 
   X64OperandGenerator g(this);
   Node* const value = node->InputAt(0);
-  if (value->opcode() == IrOpcode::kLoad && CanCover(node, value)) {
+  if ((value->opcode() == IrOpcode::kLoad ||
+       value->opcode() == IrOpcode::kLoadImmutable) &&
+      CanCover(node, value)) {
     LoadRepresentation load_rep = LoadRepresentationOf(value->op());
     MachineRepresentation rep = load_rep.representation();
     InstructionCode opcode;
@@ -1870,14 +1934,25 @@ void VisitCompareWithMemoryOperand(InstructionSelector* selector,
                                    InstructionCode opcode, Node* left,
                                    InstructionOperand right,
                                    FlagsContinuation* cont) {
-  DCHECK_EQ(IrOpcode::kLoad, left->opcode());
+  DCHECK(IrOpcode::kLoad == left->opcode() ||
+         IrOpcode::kLoadImmutable == left->opcode());
   X64OperandGenerator g(selector);
   size_t input_count = 0;
-  InstructionOperand inputs[4];
+  InstructionOperand inputs[6];
   AddressingMode addressing_mode =
       g.GetEffectiveAddressMemoryOperand(left, inputs, &input_count);
   opcode |= AddressingModeField::encode(addressing_mode);
   inputs[input_count++] = right;
+  if (cont->IsSelect()) {
+    if (opcode == kUnorderedEqual) {
+      cont->Negate();
+      inputs[input_count++] = g.UseRegister(cont->true_value());
+      inputs[input_count++] = g.Use(cont->false_value());
+    } else {
+      inputs[input_count++] = g.UseRegister(cont->false_value());
+      inputs[input_count++] = g.Use(cont->true_value());
+    }
+  }
 
   selector->EmitWithContinuation(opcode, 0, nullptr, input_count, inputs, cont);
 }
@@ -1886,6 +1961,20 @@ void VisitCompareWithMemoryOperand(InstructionSelector* selector,
 void VisitCompare(InstructionSelector* selector, InstructionCode opcode,
                   InstructionOperand left, InstructionOperand right,
                   FlagsContinuation* cont) {
+  if (cont->IsSelect()) {
+    X64OperandGenerator g(selector);
+    InstructionOperand inputs[4] = {left, right};
+    if (cont->condition() == kUnorderedEqual) {
+      cont->Negate();
+      inputs[2] = g.UseRegister(cont->true_value());
+      inputs[3] = g.Use(cont->false_value());
+    } else {
+      inputs[2] = g.UseRegister(cont->false_value());
+      inputs[3] = g.Use(cont->true_value());
+    }
+    selector->EmitWithContinuation(opcode, 0, nullptr, 4, inputs, cont);
+    return;
+  }
   selector->EmitWithContinuation(opcode, left, right, cont);
 }
 
@@ -1901,7 +1990,8 @@ void VisitCompare(InstructionSelector* selector, InstructionCode opcode,
 }
 
 MachineType MachineTypeForNarrow(Node* node, Node* hint_node) {
-  if (hint_node->opcode() == IrOpcode::kLoad) {
+  if (hint_node->opcode() == IrOpcode::kLoad ||
+      hint_node->opcode() == IrOpcode::kLoadImmutable) {
     MachineType hint = LoadRepresentationOf(hint_node->op());
     if (node->opcode() == IrOpcode::kInt32Constant ||
         node->opcode() == IrOpcode::kInt64Constant) {
@@ -1935,8 +2025,10 @@ MachineType MachineTypeForNarrow(Node* node, Node* hint_node) {
       }
     }
   }
-  return node->opcode() == IrOpcode::kLoad ? LoadRepresentationOf(node->op())
-                                           : MachineType::None();
+  return node->opcode() == IrOpcode::kLoad ||
+                 node->opcode() == IrOpcode::kLoadImmutable
+             ? LoadRepresentationOf(node->op())
+             : MachineType::None();
 }
 
 // Tries to match the size of the given opcode to that of the operands, if
@@ -2151,7 +2243,8 @@ void VisitCompareZero(InstructionSelector* selector, Node* user, Node* node,
     }
   }
   int effect_level = selector->GetEffectLevel(node, cont);
-  if (node->opcode() == IrOpcode::kLoad) {
+  if (node->opcode() == IrOpcode::kLoad ||
+      node->opcode() == IrOpcode::kLoadImmutable) {
     switch (LoadRepresentationOf(node->op()).representation()) {
       case MachineRepresentation::kWord8:
         if (opcode == kX64Cmp32) {
@@ -2920,7 +3013,6 @@ VISIT_ATOMIC_BINOP(Xor)
   V(F32x4RecipApprox)       \
   V(F32x4RecipSqrtApprox)   \
   V(F32x4DemoteF64x2Zero)   \
-  V(I64x2Neg)               \
   V(I64x2BitMask)           \
   V(I64x2SConvertI32x4Low)  \
   V(I64x2SConvertI32x4High) \
@@ -2967,7 +3059,7 @@ void InstructionSelector::VisitS128Const(Node* node) {
   X64OperandGenerator g(this);
   static const int kUint32Immediates = kSimd128Size / sizeof(uint32_t);
   uint32_t val[kUint32Immediates];
-  base::Memcpy(val, S128ImmediateParameterOf(node->op()).data(), kSimd128Size);
+  memcpy(val, S128ImmediateParameterOf(node->op()).data(), kSimd128Size);
   // If all bytes are zeros or ones, avoid emitting code for generic constants
   bool all_zeros = !(val[0] || val[1] || val[2] || val[3]);
   bool all_ones = val[0] == UINT32_MAX && val[1] == UINT32_MAX &&
@@ -3045,6 +3137,16 @@ void InstructionSelector::VisitF32x4ReplaceLane(Node* node) {
        g.Use(node->InputAt(1)));
 }
 
+void InstructionSelector::VisitF64x2ReplaceLane(Node* node) {
+  X64OperandGenerator g(this);
+  int32_t lane = OpParameter<int32_t>(node->op());
+  // When no-AVX, define dst == src to save a move.
+  InstructionOperand dst =
+      IsSupported(AVX) ? g.DefineAsRegister(node) : g.DefineSameAsFirst(node);
+  Emit(kX64F64x2ReplaceLane, dst, g.UseRegister(node->InputAt(0)),
+       g.UseImmediate(lane), g.UseRegister(node->InputAt(1)));
+}
+
 #define VISIT_SIMD_REPLACE_LANE(TYPE, OPCODE)                               \
   void InstructionSelector::Visit##TYPE##ReplaceLane(Node* node) {          \
     X64OperandGenerator g(this);                                            \
@@ -3054,7 +3156,6 @@ void InstructionSelector::VisitF32x4ReplaceLane(Node* node) {
   }
 
 #define SIMD_TYPES_FOR_REPLACE_LANE(V) \
-  V(F64x2, kX64Pinsrq)                 \
   V(I64x2, kX64Pinsrq)                 \
   V(I32x4, kX64Pinsrd)                 \
   V(I16x8, kX64Pinsrw)                 \
@@ -3185,6 +3286,15 @@ VISIT_SIMD_QFMOP(F64x2Qfms)
 VISIT_SIMD_QFMOP(F32x4Qfma)
 VISIT_SIMD_QFMOP(F32x4Qfms)
 #undef VISIT_SIMD_QFMOP
+
+void InstructionSelector::VisitI64x2Neg(Node* node) {
+  X64OperandGenerator g(this);
+  // If AVX unsupported, make sure dst != src to avoid a move.
+  InstructionOperand operand0 = IsSupported(AVX)
+                                    ? g.UseRegister(node->InputAt(0))
+                                    : g.UseUnique(node->InputAt(0));
+  Emit(kX64I64x2Neg, g.DefineAsRegister(node), operand0);
+}
 
 void InstructionSelector::VisitI64x2ShrS(Node* node) {
   X64OperandGenerator g(this);
@@ -3707,13 +3817,22 @@ void InstructionSelector::VisitI64x2Abs(Node* node) {
   }
 }
 
+void InstructionSelector::AddOutputToSelectContinuation(OperandGenerator* g,
+                                                        int first_input_index,
+                                                        Node* node) {
+  continuation_outputs_.push_back(
+      g->DefineSameAsInput(node, first_input_index));
+}
+
 // static
 MachineOperatorBuilder::Flags
 InstructionSelector::SupportedMachineOperatorFlags() {
   MachineOperatorBuilder::Flags flags =
       MachineOperatorBuilder::kWord32ShiftIsSafe |
       MachineOperatorBuilder::kWord32Ctz | MachineOperatorBuilder::kWord64Ctz |
-      MachineOperatorBuilder::kWord32Rol | MachineOperatorBuilder::kWord64Rol;
+      MachineOperatorBuilder::kWord32Rol | MachineOperatorBuilder::kWord64Rol |
+      MachineOperatorBuilder::kWord32Select |
+      MachineOperatorBuilder::kWord64Select;
   if (CpuFeatures::IsSupported(POPCNT)) {
     flags |= MachineOperatorBuilder::kWord32Popcnt |
              MachineOperatorBuilder::kWord64Popcnt;

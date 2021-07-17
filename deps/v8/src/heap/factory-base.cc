@@ -53,36 +53,30 @@ FactoryBase<LocalFactory>::NewHeapNumber<AllocationType::kOld>();
 template <typename Impl>
 Handle<Struct> FactoryBase<Impl>::NewStruct(InstanceType type,
                                             AllocationType allocation) {
-  return handle(NewStructInternal(type, allocation), isolate());
-}
-
-template <typename Impl>
-Struct FactoryBase<Impl>::NewStructInternal(InstanceType type,
-                                            AllocationType allocation) {
-  Map map = Map::GetInstanceTypeMap(read_only_roots(), type);
+  ReadOnlyRoots roots = read_only_roots();
+  Map map = Map::GetInstanceTypeMap(roots, type);
   int size = map.instance_size();
-  HeapObject result = AllocateRawWithImmortalMap(size, allocation, map);
-  Struct str = Struct::cast(result);
-  str.InitializeBody(size);
-  return str;
+  return handle(NewStructInternal(roots, map, size, allocation), isolate());
 }
 
 template <typename Impl>
 Handle<AccessorPair> FactoryBase<Impl>::NewAccessorPair() {
-  Handle<AccessorPair> accessors = Handle<AccessorPair>::cast(
-      NewStruct(ACCESSOR_PAIR_TYPE, AllocationType::kOld));
-  AccessorPair raw = *accessors;
+  auto accessors =
+      NewStructInternal<AccessorPair>(ACCESSOR_PAIR_TYPE, AllocationType::kOld);
   DisallowGarbageCollection no_gc;
-  raw.set_getter(read_only_roots().null_value(), SKIP_WRITE_BARRIER);
-  raw.set_setter(read_only_roots().null_value(), SKIP_WRITE_BARRIER);
-  return accessors;
+  accessors.set_getter(read_only_roots().null_value(), SKIP_WRITE_BARRIER);
+  accessors.set_setter(read_only_roots().null_value(), SKIP_WRITE_BARRIER);
+  return handle(accessors, isolate());
 }
 
 template <typename Impl>
 Handle<FixedArray> FactoryBase<Impl>::NewFixedArray(int length,
                                                     AllocationType allocation) {
-  DCHECK_LE(0, length);
   if (length == 0) return impl()->empty_fixed_array();
+  if (length < 0 || length > FixedArray::kMaxLength) {
+    FATAL("Fatal JavaScript invalid size error %d", length);
+    UNREACHABLE();
+  }
   return NewFixedArrayWithFiller(
       read_only_roots().fixed_array_map_handle(), length,
       read_only_roots().undefined_value_handle(), allocation);
@@ -128,7 +122,8 @@ Handle<FixedArrayBase> FactoryBase<Impl>::NewFixedDoubleArray(
     int length, AllocationType allocation) {
   if (length == 0) return impl()->empty_fixed_array();
   if (length < 0 || length > FixedDoubleArray::kMaxLength) {
-    isolate()->FatalProcessOutOfHeapMemory("invalid array length");
+    FATAL("Fatal JavaScript invalid size error %d", length);
+    UNREACHABLE();
   }
   int size = FixedDoubleArray::SizeFor(length);
   Map map = read_only_roots().fixed_double_array_map();
@@ -172,8 +167,10 @@ template <typename Impl>
 Handle<ByteArray> FactoryBase<Impl>::NewByteArray(int length,
                                                   AllocationType allocation) {
   if (length < 0 || length > ByteArray::kMaxLength) {
-    isolate()->FatalProcessOutOfHeapMemory("invalid array length");
+    FATAL("Fatal JavaScript invalid size error %d", length);
+    UNREACHABLE();
   }
+  if (length == 0) return impl()->empty_byte_array();
   int size = ByteArray::SizeFor(length);
   HeapObject result = AllocateRawWithImmortalMap(
       size, allocation, read_only_roots().byte_array_map());
@@ -189,7 +186,8 @@ Handle<BytecodeArray> FactoryBase<Impl>::NewBytecodeArray(
     int length, const byte* raw_bytecodes, int frame_size, int parameter_count,
     Handle<FixedArray> constant_pool) {
   if (length < 0 || length > BytecodeArray::kMaxLength) {
-    isolate()->FatalProcessOutOfHeapMemory("invalid array length");
+    FATAL("Fatal JavaScript invalid size error %d", length);
+    UNREACHABLE();
   }
   // Bytecode array is AllocationType::kOld, so constant pool array should be
   // too.
@@ -230,8 +228,8 @@ Handle<Script> FactoryBase<Impl>::NewScriptWithId(
   DCHECK(source->IsString() || source->IsUndefined());
   // Create and initialize script object.
   ReadOnlyRoots roots = read_only_roots();
-  Handle<Script> script =
-      Handle<Script>::cast(NewStruct(SCRIPT_TYPE, AllocationType::kOld));
+  Handle<Script> script = handle(
+      NewStructInternal<Script>(SCRIPT_TYPE, AllocationType::kOld), isolate());
   {
     DisallowGarbageCollection no_gc;
     Script raw = *script;
@@ -243,8 +241,8 @@ Handle<Script> FactoryBase<Impl>::NewScriptWithId(
     raw.set_context_data(roots.undefined_value(), SKIP_WRITE_BARRIER);
     raw.set_type(Script::TYPE_NORMAL);
     raw.set_line_ends(roots.undefined_value(), SKIP_WRITE_BARRIER);
-    raw.set_eval_from_shared_or_wrapped_arguments(roots.undefined_value(),
-                                                  SKIP_WRITE_BARRIER);
+    raw.set_eval_from_shared_or_wrapped_arguments_or_sfi_table(
+        roots.undefined_value(), SKIP_WRITE_BARRIER);
     raw.set_eval_from_position(0);
     raw.set_shared_function_infos(roots.empty_weak_fixed_array(),
                                   SKIP_WRITE_BARRIER);
@@ -266,7 +264,7 @@ Handle<SharedFunctionInfo> FactoryBase<Impl>::NewSharedFunctionInfoForLiteral(
   FunctionKind kind = literal->kind();
   Handle<SharedFunctionInfo> shared =
       NewSharedFunctionInfo(literal->GetName(isolate()), MaybeHandle<Code>(),
-                            Builtins::kCompileLazy, kind);
+                            Builtin::kCompileLazy, kind);
   SharedFunctionInfo::InitFromFunctionLiteral(isolate(), shared, literal,
                                               is_toplevel);
   shared->SetScript(read_only_roots(), *script, literal->function_literal_id(),
@@ -311,7 +309,7 @@ FactoryBase<Impl>::NewUncompiledDataWithPreparseData(
 template <typename Impl>
 Handle<SharedFunctionInfo> FactoryBase<Impl>::NewSharedFunctionInfo(
     MaybeHandle<String> maybe_name, MaybeHandle<HeapObject> maybe_function_data,
-    int maybe_builtin_index, FunctionKind kind) {
+    Builtin builtin, FunctionKind kind) {
   Handle<SharedFunctionInfo> shared = NewSharedFunctionInfo();
   DisallowGarbageCollection no_gc;
   SharedFunctionInfo raw = *shared;
@@ -330,15 +328,15 @@ Handle<SharedFunctionInfo> FactoryBase<Impl>::NewSharedFunctionInfo(
   if (maybe_function_data.ToHandle(&function_data)) {
     // If we pass function_data then we shouldn't pass a builtin index, and
     // the function_data should not be code with a builtin.
-    DCHECK(!Builtins::IsBuiltinId(maybe_builtin_index));
+    DCHECK(!Builtins::IsBuiltinId(builtin));
     DCHECK_IMPLIES(function_data->IsCode(),
                    !Code::cast(*function_data).is_builtin());
     raw.set_function_data(*function_data, kReleaseStore);
-  } else if (Builtins::IsBuiltinId(maybe_builtin_index)) {
-    raw.set_builtin_id(maybe_builtin_index);
+  } else if (Builtins::IsBuiltinId(builtin)) {
+    raw.set_builtin_id(builtin);
   } else {
     DCHECK(raw.HasBuiltinId());
-    DCHECK_EQ(Builtins::kIllegal, raw.builtin_id());
+    DCHECK_EQ(Builtin::kIllegal, raw.builtin_id());
   }
 
   raw.CalculateConstructAsBuiltin();
@@ -394,14 +392,12 @@ template <typename Impl>
 Handle<ArrayBoilerplateDescription>
 FactoryBase<Impl>::NewArrayBoilerplateDescription(
     ElementsKind elements_kind, Handle<FixedArrayBase> constant_values) {
-  Handle<ArrayBoilerplateDescription> result =
-      Handle<ArrayBoilerplateDescription>::cast(
-          NewStruct(ARRAY_BOILERPLATE_DESCRIPTION_TYPE, AllocationType::kOld));
+  auto result = NewStructInternal<ArrayBoilerplateDescription>(
+      ARRAY_BOILERPLATE_DESCRIPTION_TYPE, AllocationType::kOld);
   DisallowGarbageCollection no_gc;
-  ArrayBoilerplateDescription raw = *result;
-  raw.set_elements_kind(elements_kind);
-  raw.set_constant_elements(*constant_values);
-  return result;
+  result.set_elements_kind(elements_kind);
+  result.set_constant_elements(*constant_values);
+  return handle(result, isolate());
 }
 
 template <typename Impl>
@@ -409,15 +405,13 @@ Handle<RegExpBoilerplateDescription>
 FactoryBase<Impl>::NewRegExpBoilerplateDescription(Handle<FixedArray> data,
                                                    Handle<String> source,
                                                    Smi flags) {
-  Handle<RegExpBoilerplateDescription> result =
-      Handle<RegExpBoilerplateDescription>::cast(NewStruct(
-          REG_EXP_BOILERPLATE_DESCRIPTION_TYPE, AllocationType::kOld));
+  auto result = NewStructInternal<RegExpBoilerplateDescription>(
+      REG_EXP_BOILERPLATE_DESCRIPTION_TYPE, AllocationType::kOld);
   DisallowGarbageCollection no_gc;
-  RegExpBoilerplateDescription raw = *result;
-  raw.set_data(*data);
-  raw.set_source(*source);
-  raw.set_flags(flags.value());
-  return result;
+  result.set_data(*data);
+  result.set_source(*source);
+  result.set_flags(flags.value());
+  return handle(result, isolate());
 }
 
 template <typename Impl>
@@ -426,14 +420,12 @@ FactoryBase<Impl>::NewTemplateObjectDescription(
     Handle<FixedArray> raw_strings, Handle<FixedArray> cooked_strings) {
   DCHECK_EQ(raw_strings->length(), cooked_strings->length());
   DCHECK_LT(0, raw_strings->length());
-  Handle<TemplateObjectDescription> result =
-      Handle<TemplateObjectDescription>::cast(
-          NewStruct(TEMPLATE_OBJECT_DESCRIPTION_TYPE, AllocationType::kOld));
+  auto result = NewStructInternal<TemplateObjectDescription>(
+      TEMPLATE_OBJECT_DESCRIPTION_TYPE, AllocationType::kOld);
   DisallowGarbageCollection no_gc;
-  TemplateObjectDescription raw = *result;
-  raw.set_raw_strings(*raw_strings);
-  raw.set_cooked_strings(*cooked_strings);
-  return result;
+  result.set_raw_strings(*raw_strings);
+  result.set_cooked_strings(*cooked_strings);
+  return handle(result, isolate());
 }
 
 template <typename Impl>
@@ -477,10 +469,10 @@ Handle<String> FactoryBase<Impl>::MakeOrFindTwoCharacterString(uint16_t c1,
                                                                uint16_t c2) {
   if ((c1 | c2) <= unibrow::Latin1::kMaxChar) {
     uint8_t buffer[] = {static_cast<uint8_t>(c1), static_cast<uint8_t>(c2)};
-    return InternalizeString(Vector<const uint8_t>(buffer, 2));
+    return InternalizeString(base::Vector<const uint8_t>(buffer, 2));
   }
   uint16_t buffer[] = {c1, c2};
-  return InternalizeString(Vector<const uint16_t>(buffer, 2));
+  return InternalizeString(base::Vector<const uint16_t>(buffer, 2));
 }
 
 template <typename Impl>
@@ -512,7 +504,7 @@ template EXPORT_TEMPLATE_DEFINE(V8_EXPORT_PRIVATE)
 
 template <typename Impl>
 Handle<String> FactoryBase<Impl>::InternalizeString(
-    const Vector<const uint8_t>& string, bool convert_encoding) {
+    const base::Vector<const uint8_t>& string, bool convert_encoding) {
   SequentialStringKey<uint8_t> key(string, HashSeed(read_only_roots()),
                                    convert_encoding);
   return InternalizeStringWithKey(&key);
@@ -520,7 +512,7 @@ Handle<String> FactoryBase<Impl>::InternalizeString(
 
 template <typename Impl>
 Handle<String> FactoryBase<Impl>::InternalizeString(
-    const Vector<const uint16_t>& string, bool convert_encoding) {
+    const base::Vector<const uint16_t>& string, bool convert_encoding) {
   SequentialStringKey<uint16_t> key(string, HashSeed(read_only_roots()),
                                     convert_encoding);
   return InternalizeStringWithKey(&key);
@@ -528,7 +520,7 @@ Handle<String> FactoryBase<Impl>::InternalizeString(
 
 template <typename Impl>
 Handle<SeqOneByteString> FactoryBase<Impl>::NewOneByteInternalizedString(
-    const Vector<const uint8_t>& str, uint32_t raw_hash_field) {
+    const base::Vector<const uint8_t>& str, uint32_t raw_hash_field) {
   Handle<SeqOneByteString> result =
       AllocateRawOneByteInternalizedString(str.length(), raw_hash_field);
   DisallowGarbageCollection no_gc;
@@ -539,12 +531,12 @@ Handle<SeqOneByteString> FactoryBase<Impl>::NewOneByteInternalizedString(
 
 template <typename Impl>
 Handle<SeqTwoByteString> FactoryBase<Impl>::NewTwoByteInternalizedString(
-    const Vector<const uc16>& str, uint32_t raw_hash_field) {
+    const base::Vector<const base::uc16>& str, uint32_t raw_hash_field) {
   Handle<SeqTwoByteString> result =
       AllocateRawTwoByteInternalizedString(str.length(), raw_hash_field);
   DisallowGarbageCollection no_gc;
   MemCopy(result->GetChars(no_gc, SharedStringAccessGuardIfNeeded::NotNeeded()),
-          str.begin(), str.length() * kUC16Size);
+          str.begin(), str.length() * base::kUC16Size);
   return result;
 }
 
@@ -652,7 +644,7 @@ MaybeHandle<String> FactoryBase<Impl>::NewConsString(
 
     DisallowGarbageCollection no_gc;
     SharedStringAccessGuardIfNeeded access_guard(isolate());
-    uc16* sink = result->GetChars(no_gc, access_guard);
+    base::uc16* sink = result->GetChars(no_gc, access_guard);
     String::WriteToFlat(*left, sink, 0, left->length(), access_guard);
     String::WriteToFlat(*right, sink + left->length(), 0, right->length(),
                         access_guard);
@@ -691,7 +683,8 @@ template <typename Impl>
 Handle<FreshlyAllocatedBigInt> FactoryBase<Impl>::NewBigInt(
     int length, AllocationType allocation) {
   if (length < 0 || length > BigInt::kMaxLength) {
-    isolate()->FatalProcessOutOfHeapMemory("invalid BigInt length");
+    FATAL("Fatal JavaScript invalid size error %d", length);
+    UNREACHABLE();
   }
   HeapObject result = AllocateRawWithImmortalMap(
       BigInt::SizeFor(length), allocation, read_only_roots().bigint_map());
@@ -760,11 +753,11 @@ Handle<DescriptorArray> FactoryBase<Impl>::NewDescriptorArray(
 template <typename Impl>
 Handle<ClassPositions> FactoryBase<Impl>::NewClassPositions(int start,
                                                             int end) {
-  Handle<ClassPositions> class_positions = Handle<ClassPositions>::cast(
-      NewStruct(CLASS_POSITIONS_TYPE, AllocationType::kOld));
-  class_positions->set_start(start);
-  class_positions->set_end(end);
-  return class_positions;
+  auto result = NewStructInternal<ClassPositions>(CLASS_POSITIONS_TYPE,
+                                                  AllocationType::kOld);
+  result.set_start(start);
+  result.set_end(end);
+  return handle(result, isolate());
 }
 
 template <typename Impl>
@@ -813,7 +806,8 @@ HeapObject FactoryBase<Impl>::AllocateRawArray(int size,
                                                AllocationType allocation) {
   HeapObject result = AllocateRaw(size, allocation);
   if (!V8_ENABLE_THIRD_PARTY_HEAP_BOOL &&
-      (size > Heap::MaxRegularHeapObjectSize(allocation)) &&
+      (size >
+       isolate()->heap()->AsHeap()->MaxRegularHeapObjectSize(allocation)) &&
       FLAG_use_marking_progress_bar) {
     BasicMemoryChunk* chunk = BasicMemoryChunk::FromHeapObject(result);
     chunk->SetFlag<AccessMode::ATOMIC>(MemoryChunk::HAS_PROGRESS_BAR);
@@ -825,7 +819,8 @@ template <typename Impl>
 HeapObject FactoryBase<Impl>::AllocateRawFixedArray(int length,
                                                     AllocationType allocation) {
   if (length < 0 || length > FixedArray::kMaxLength) {
-    isolate()->FatalProcessOutOfHeapMemory("invalid array length");
+    FATAL("Fatal JavaScript invalid size error %d", length);
+    UNREACHABLE();
   }
   return AllocateRawArray(FixedArray::SizeFor(length), allocation);
 }
@@ -834,7 +829,8 @@ template <typename Impl>
 HeapObject FactoryBase<Impl>::AllocateRawWeakArrayList(
     int capacity, AllocationType allocation) {
   if (capacity < 0 || capacity > WeakArrayList::kMaxCapacity) {
-    isolate()->FatalProcessOutOfHeapMemory("invalid array length");
+    FATAL("Fatal JavaScript invalid size error %d", capacity);
+    UNREACHABLE();
   }
   return AllocateRawArray(WeakArrayList::SizeForCapacity(capacity), allocation);
 }
@@ -878,8 +874,9 @@ FactoryBase<Impl>::NewSwissNameDictionaryWithCapacity(
     return read_only_roots().empty_swiss_property_dictionary_handle();
   }
 
-  if (capacity > SwissNameDictionary::MaxCapacity()) {
-    isolate()->FatalProcessOutOfHeapMemory("invalid table size");
+  if (capacity < 0 || capacity > SwissNameDictionary::MaxCapacity()) {
+    FATAL("Fatal JavaScript invalid size error %d", capacity);
+    UNREACHABLE();
   }
 
   int meta_table_length = SwissNameDictionary::MetaTableSizeFor(capacity);
@@ -900,6 +897,18 @@ Handle<SwissNameDictionary> FactoryBase<Impl>::NewSwissNameDictionary(
     int at_least_space_for, AllocationType allocation) {
   return NewSwissNameDictionaryWithCapacity(
       SwissNameDictionary::CapacityFor(at_least_space_for), allocation);
+}
+
+template <typename Impl>
+Handle<FunctionTemplateRareData>
+FactoryBase<Impl>::NewFunctionTemplateRareData() {
+  auto function_template_rare_data =
+      NewStructInternal<FunctionTemplateRareData>(
+          FUNCTION_TEMPLATE_RARE_DATA_TYPE, AllocationType::kOld);
+  DisallowGarbageCollection no_gc;
+  function_template_rare_data.set_c_function_overloads(
+      *impl()->empty_fixed_array(), SKIP_WRITE_BARRIER);
+  return handle(function_template_rare_data, isolate());
 }
 
 // Instantiate FactoryBase for the two variants we want.

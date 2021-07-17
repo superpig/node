@@ -20,6 +20,8 @@ namespace v8 {
 namespace internal {
 namespace third_party_heap {
 
+class Impl {};
+
 // static
 std::unique_ptr<Heap> Heap::New(v8::internal::Isolate*) { return nullptr; }
 
@@ -36,6 +38,14 @@ const base::AddressRegion& Heap::GetCodeRange() {
   static const base::AddressRegion no_region(0, 0);
   return no_region;
 }
+
+bool Heap::IsPendingAllocation(HeapObject) { return false; }
+
+// static
+bool Heap::InSpace(Address, AllocationSpace) { return false; }
+
+// static
+bool Heap::InOldSpace(Address) { return false; }
 
 // static
 bool Heap::InCodeSpace(Address) { return false; }

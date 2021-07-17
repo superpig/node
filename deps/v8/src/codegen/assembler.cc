@@ -34,6 +34,10 @@
 
 #include "src/codegen/assembler.h"
 
+#ifdef V8_CODE_COMMENTS
+#include <iomanip>
+#endif
+#include "src/base/vector.h"
 #include "src/codegen/assembler-inl.h"
 #include "src/codegen/string-constants.h"
 #include "src/deoptimizer/deoptimizer.h"
@@ -43,7 +47,6 @@
 #include "src/snapshot/embedded/embedded-data.h"
 #include "src/snapshot/snapshot.h"
 #include "src/utils/ostreams.h"
-#include "src/utils/vector.h"
 
 namespace v8 {
 namespace internal {
@@ -69,7 +72,7 @@ AssemblerOptions AssemblerOptions::Default(Isolate* isolate) {
 #endif
   options.inline_offheap_trampolines &= !generating_embedded_builtin;
 #if V8_TARGET_ARCH_X64 || V8_TARGET_ARCH_ARM64
-  const base::AddressRegion& code_range = isolate->heap()->code_range();
+  const base::AddressRegion& code_range = isolate->heap()->code_region();
   DCHECK_IMPLIES(code_range.begin() != kNullAddress, !code_range.is_empty());
   options.code_range_start = code_range.begin();
 #endif
@@ -96,9 +99,10 @@ namespace {
 class DefaultAssemblerBuffer : public AssemblerBuffer {
  public:
   explicit DefaultAssemblerBuffer(int size)
-      : buffer_(OwnedVector<uint8_t>::NewForOverwrite(size)) {
+      : buffer_(base::OwnedVector<uint8_t>::NewForOverwrite(
+            std::max(AssemblerBase::kMinimalBufferSize, size))) {
 #ifdef DEBUG
-    ZapCode(reinterpret_cast<Address>(buffer_.start()), size);
+    ZapCode(reinterpret_cast<Address>(buffer_.start()), buffer_.size());
 #endif
   }
 
@@ -112,7 +116,7 @@ class DefaultAssemblerBuffer : public AssemblerBuffer {
   }
 
  private:
-  OwnedVector<uint8_t> buffer_;
+  base::OwnedVector<uint8_t> buffer_;
 };
 
 class ExternalAssemblerBufferImpl : public AssemblerBuffer {
@@ -133,6 +137,35 @@ class ExternalAssemblerBufferImpl : public AssemblerBuffer {
 
  private:
   byte* const start_;
+  const int size_;
+};
+
+class OnHeapAssemblerBuffer : public AssemblerBuffer {
+ public:
+  OnHeapAssemblerBuffer(Handle<Code> code, int size)
+      : code_(code), size_(size) {}
+
+  byte* start() const override {
+    return reinterpret_cast<byte*>(code_->raw_instruction_start());
+  }
+
+  int size() const override { return size_; }
+
+  std::unique_ptr<AssemblerBuffer> Grow(int new_size) override {
+    DCHECK_LT(size(), new_size);
+    // We fall back to the slow path using the default assembler buffer and
+    // compile the code off the GC heap. Compiling directly on heap makes less
+    // sense now, since we will need to allocate a new Code object, copy the
+    // content generated so far and relocate.
+    return std::make_unique<DefaultAssemblerBuffer>(new_size);
+  }
+
+  bool IsOnHeap() const override { return true; }
+
+  MaybeHandle<Code> code() const override { return code_; }
+
+ private:
+  Handle<Code> code_;
   const int size_;
 };
 
@@ -172,15 +205,29 @@ std::unique_ptr<AssemblerBuffer> NewAssemblerBuffer(int size) {
   return std::make_unique<DefaultAssemblerBuffer>(size);
 }
 
+std::unique_ptr<AssemblerBuffer> NewOnHeapAssemblerBuffer(Isolate* isolate,
+                                                          int estimated) {
+  int size = std::max(AssemblerBase::kMinimalBufferSize, estimated);
+  MaybeHandle<Code> code =
+      isolate->factory()->NewEmptyCode(CodeKind::BASELINE, size);
+  if (code.is_null()) return {};
+  return std::make_unique<OnHeapAssemblerBuffer>(code.ToHandleChecked(), size);
+}
+
 // -----------------------------------------------------------------------------
 // Implementation of AssemblerBase
+
+// static
+constexpr int AssemblerBase::kMinimalBufferSize;
+
+// static
+constexpr int AssemblerBase::kDefaultBufferSize;
 
 AssemblerBase::AssemblerBase(const AssemblerOptions& options,
                              std::unique_ptr<AssemblerBuffer> buffer)
     : buffer_(std::move(buffer)),
       options_(options),
       enabled_cpu_features_(0),
-      emit_debug_code_(FLAG_debug_code),
       predictable_code_size_(false),
       constant_pool_available_(false),
       jump_optimization_info_(nullptr) {
@@ -193,7 +240,7 @@ AssemblerBase::~AssemblerBase() = default;
 
 void AssemblerBase::Print(Isolate* isolate) {
   StdoutStream os;
-  v8::internal::Disassembler::Decode(isolate, &os, buffer_start_, pc_);
+  v8::internal::Disassembler::Decode(isolate, os, buffer_start_, pc_);
 }
 
 // -----------------------------------------------------------------------------
@@ -298,6 +345,7 @@ Handle<HeapObject> AssemblerBase::GetEmbeddedObject(
 
 
 int Assembler::WriteCodeComments() {
+  if (!FLAG_code_comments) return 0;
   CHECK_IMPLIES(code_comments_writer_.entry_count() > 0,
                 options().emit_code_comments);
   if (code_comments_writer_.entry_count() == 0) return 0;
@@ -307,6 +355,25 @@ int Assembler::WriteCodeComments() {
   DCHECK_EQ(size, code_comments_writer_.section_size());
   return size;
 }
+
+#ifdef V8_CODE_COMMENTS
+int Assembler::CodeComment::depth() const { return assembler_->comment_depth_; }
+void Assembler::CodeComment::Open(const std::string& comment) {
+  std::stringstream sstream;
+  sstream << std::setfill(' ') << std::setw(depth() * kIndentWidth + 2);
+  sstream << "[ " << comment;
+  assembler_->comment_depth_++;
+  assembler_->RecordComment(sstream.str());
+}
+
+void Assembler::CodeComment::Close() {
+  assembler_->comment_depth_--;
+  std::string comment = "]";
+  comment.insert(0, depth() * kIndentWidth, ' ');
+  DCHECK_LE(0, depth());
+  assembler_->RecordComment(comment);
+}
+#endif
 
 }  // namespace internal
 }  // namespace v8

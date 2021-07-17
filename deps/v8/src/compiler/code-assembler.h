@@ -30,6 +30,7 @@
 #include "src/objects/js-proxy.h"
 #include "src/objects/map.h"
 #include "src/objects/maybe-object.h"
+#include "src/objects/object-type.h"
 #include "src/objects/objects.h"
 #include "src/objects/oddball.h"
 #include "src/objects/smi.h"
@@ -85,20 +86,6 @@ TORQUE_DEFINED_CLASS_LIST(MAKE_FORWARD_DECLARATION)
 
 template <typename T>
 class Signature;
-
-#define ENUM_ELEMENT(Name) k##Name,
-#define ENUM_STRUCT_ELEMENT(NAME, Name, name) k##Name,
-enum class ObjectType {
-  ENUM_ELEMENT(Object)                 //
-  ENUM_ELEMENT(Smi)                    //
-  ENUM_ELEMENT(TaggedIndex)            //
-  ENUM_ELEMENT(HeapObject)             //
-  OBJECT_TYPE_LIST(ENUM_ELEMENT)       //
-  HEAP_OBJECT_TYPE_LIST(ENUM_ELEMENT)  //
-  STRUCT_LIST(ENUM_STRUCT_ELEMENT)     //
-};
-#undef ENUM_ELEMENT
-#undef ENUM_STRUCT_ELEMENT
 
 enum class CheckBounds { kAlways, kDebugOnly };
 inline bool NeedsBoundsCheck(CheckBounds check_bounds) {
@@ -192,13 +179,6 @@ using AtomicUint64 = UintPtrT;
 #else
 #error Unknown architecture.
 #endif
-
-// {raw_value} must be a tagged Object.
-// {raw_type} must be a tagged Smi.
-// {raw_location} must be a tagged String.
-// Returns a tagged Smi.
-Address CheckObjectType(Address raw_value, Address raw_type,
-                        Address raw_location);
 
 namespace compiler {
 
@@ -310,7 +290,6 @@ class CodeAssemblerParameterizedLabel;
   V(Word64And, Word64T, Word64T, Word64T)                               \
   V(Word64Or, Word64T, Word64T, Word64T)                                \
   V(Word64Xor, Word64T, Word64T, Word64T)                               \
-  V(Word64Ror, Word64T, Word64T, Word64T)                               \
   V(Word64Shl, Word64T, Word64T, Word64T)                               \
   V(Word64Shr, Word64T, Word64T, Word64T)                               \
   V(Word64Sar, Word64T, Word64T, Word64T)
@@ -585,6 +564,8 @@ class V8_EXPORT_PRIVATE CodeAssembler {
     return value ? Int32TrueConstant() : Int32FalseConstant();
   }
 
+  bool IsMapOffsetConstant(Node* node);
+
   bool TryToInt32Constant(TNode<IntegralT> node, int32_t* out_value);
   bool TryToInt64Constant(TNode<IntegralT> node, int64_t* out_value);
   bool TryToIntPtrConstant(TNode<IntegralT> node, intptr_t* out_value);
@@ -789,8 +770,16 @@ class V8_EXPORT_PRIVATE CodeAssembler {
   Node* LoadFromObject(MachineType type, TNode<Object> object,
                        TNode<IntPtrT> offset);
 
+#ifdef V8_MAP_PACKING
+  Node* PackMapWord(Node* value);
+#endif
+
   // Load a value from the root array.
+  // If map packing is enabled, LoadRoot for a root map returns the unpacked map
+  // word (i.e., the map). Use LoadRootMapWord to obtain the packed map word
+  // instead.
   TNode<Object> LoadRoot(RootIndex root_index);
+  TNode<AnyTaggedT> LoadRootMapWord(RootIndex root_index);
 
   template <typename Type>
   TNode<Type> UnalignedLoad(TNode<RawPtrT> base, TNode<IntPtrT> offset) {
@@ -978,6 +967,11 @@ class V8_EXPORT_PRIVATE CodeAssembler {
                               static_cast<TNode<Word32T>>(right)));
   }
 
+  TNode<IntPtrT> WordOr(TNode<IntPtrT> left, TNode<IntPtrT> right) {
+    return Signed(WordOr(static_cast<TNode<WordT>>(left),
+                         static_cast<TNode<WordT>>(right)));
+  }
+
   TNode<Int32T> Word32Or(TNode<Int32T> left, TNode<Int32T> right) {
     return Signed(Word32Or(static_cast<TNode<Word32T>>(left),
                            static_cast<TNode<Word32T>>(right)));
@@ -995,6 +989,9 @@ class V8_EXPORT_PRIVATE CodeAssembler {
   TNode<BoolT> Word64Equal(TNode<Word64T> left, TNode<Word64T> right);
   TNode<BoolT> Word64NotEqual(TNode<Word64T> left, TNode<Word64T> right);
 
+  TNode<IntPtrT> WordNot(TNode<IntPtrT> a) {
+    return Signed(WordNot(static_cast<TNode<WordT>>(a)));
+  }
   TNode<BoolT> Word32Or(TNode<BoolT> left, TNode<BoolT> right) {
     return UncheckedCast<BoolT>(Word32Or(static_cast<TNode<Word32T>>(left),
                                          static_cast<TNode<Word32T>>(right)));
@@ -1599,13 +1596,13 @@ class V8_EXPORT_PRIVATE CodeAssemblerState {
   CodeAssemblerState(Isolate* isolate, Zone* zone,
                      const CallInterfaceDescriptor& descriptor, CodeKind kind,
                      const char* name, PoisoningMitigationLevel poisoning_level,
-                     int32_t builtin_index = Builtins::kNoBuiltinId);
+                     Builtin builtin = Builtin::kNoBuiltinId);
 
   // Create with JSCall linkage.
   CodeAssemblerState(Isolate* isolate, Zone* zone, int parameter_count,
                      CodeKind kind, const char* name,
                      PoisoningMitigationLevel poisoning_level,
-                     int32_t builtin_index = Builtins::kNoBuiltinId);
+                     Builtin builtin = Builtin::kNoBuiltinId);
 
   ~CodeAssemblerState();
 
@@ -1632,7 +1629,7 @@ class V8_EXPORT_PRIVATE CodeAssemblerState {
   CodeAssemblerState(Isolate* isolate, Zone* zone,
                      CallDescriptor* call_descriptor, CodeKind kind,
                      const char* name, PoisoningMitigationLevel poisoning_level,
-                     int32_t builtin_index);
+                     Builtin builtin);
 
   void PushExceptionHandler(CodeAssemblerExceptionHandlerLabel* label);
   void PopExceptionHandler();
@@ -1640,7 +1637,7 @@ class V8_EXPORT_PRIVATE CodeAssemblerState {
   std::unique_ptr<RawMachineAssembler> raw_assembler_;
   CodeKind kind_;
   const char* name_;
-  int32_t builtin_index_;
+  Builtin builtin_;
   bool code_generated_;
   ZoneSet<CodeAssemblerVariable::Impl*, CodeAssemblerVariable::ImplComparator>
       variables_;

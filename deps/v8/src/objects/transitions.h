@@ -19,6 +19,10 @@
 namespace v8 {
 namespace internal {
 
+namespace third_party_heap {
+class Impl;
+}
+
 // Find all transitions with given name and calls the callback.
 using ForEachTransitionCallback = std::function<void(Map)>;
 
@@ -100,13 +104,13 @@ class V8_EXPORT_PRIVATE TransitionsAccessor {
       PropertyAttributes* out_integrity_level = nullptr);
 
   // ===== ITERATION =====
-  using TraverseCallback = void (*)(Map map, void* data);
+  using TraverseCallback = std::function<void(Map)>;
 
   // Traverse the transition tree in postorder.
-  void TraverseTransitionTree(TraverseCallback callback, void* data) {
+  void TraverseTransitionTree(TraverseCallback callback) {
     // Make sure that we do not allocate in the callback.
     DisallowGarbageCollection no_gc;
-    TraverseTransitionTreeInternal(callback, data, &no_gc);
+    TraverseTransitionTreeInternal(callback, &no_gc);
   }
 
   // ===== PROTOTYPE TRANSITIONS =====
@@ -165,6 +169,7 @@ class V8_EXPORT_PRIVATE TransitionsAccessor {
 
  private:
   friend class MarkCompactCollector;  // For HasSimpleTransitionTo.
+  friend class third_party_heap::Impl;
   friend class TransitionArray;
 
   inline PropertyDetails GetSimpleTargetDetails(Map transition);
@@ -192,7 +197,7 @@ class V8_EXPORT_PRIVATE TransitionsAccessor {
   void SetPrototypeTransitions(Handle<WeakFixedArray> proto_transitions);
   WeakFixedArray GetPrototypeTransitions();
 
-  void TraverseTransitionTreeInternal(TraverseCallback callback, void* data,
+  void TraverseTransitionTreeInternal(TraverseCallback callback,
                                       DisallowGarbageCollection* no_gc);
 
   Isolate* isolate_;
@@ -285,6 +290,7 @@ class TransitionArray : public WeakFixedArray {
  private:
   friend class Factory;
   friend class MarkCompactCollector;
+  friend class third_party_heap::Impl;
   friend class TransitionsAccessor;
 
   inline void SetNumberOfTransitions(int number_of_transitions);

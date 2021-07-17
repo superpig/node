@@ -24,6 +24,7 @@ namespace internal {
   V(kExpectedFeedbackVector, "Expected feedback vector")                       \
   V(kFunctionDataShouldBeBytecodeArrayOnInterpreterEntry,                      \
     "The function_data field should be a BytecodeArray on interpreter entry")  \
+  V(kFpuTopIsNotZeroInDeoptimizer, "FPU TOP is not zero in deoptimizer")       \
   V(kInputStringTooLong, "Input string too long")                              \
   V(kInvalidBytecode, "Invalid bytecode")                                      \
   V(kInvalidBytecodeAdvance, "Cannot advance current bytecode, ")              \
@@ -48,6 +49,7 @@ namespace internal {
   V(kOperandIsNotAFixedArray, "Operand is not a fixed array")                  \
   V(kOperandIsNotAFunction, "Operand is not a function")                       \
   V(kOperandIsNotAGeneratorObject, "Operand is not a generator object")        \
+  V(kOperandIsNotACodeT, "Operand is not a CodeT")                             \
   V(kOperandIsNotASmi, "Operand is not a smi")                                 \
   V(kPromiseAlreadySettled, "Promise already settled")                         \
   V(kReceivedInvalidReturnAddress, "Received invalid return address")          \
