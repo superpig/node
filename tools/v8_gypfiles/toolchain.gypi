@@ -65,7 +65,7 @@
     'v8_android_log_stdout%': 0,
 
     # Force disable libstdc++ debug mode.
-    'disable_glibcxx_debug%': 0,
+    #'disable_glibcxx_debug%': 0,
 
     'v8_enable_backtrace%': 0,
 
@@ -1167,11 +1167,11 @@
             # Support for backtrace_symbols.
             'ldflags': [ '-rdynamic' ],
           }],
-          ['OS=="linux" and disable_glibcxx_debug==0', {
+          #['OS=="linux" and disable_glibcxx_debug==0', {
             # Enable libstdc++ debugging facilities to help catch problems
             # early, see http://crbug.com/65151 .
-            'defines': ['_GLIBCXX_DEBUG=1',],
-          }],
+          #  'defines': ['_GLIBCXX_DEBUG=1',],
+          #}],
           ['OS=="aix"', {
             'ldflags': [ '-Wl,-bbigtoc' ],
             'conditions': [
