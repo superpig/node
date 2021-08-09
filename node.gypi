@@ -73,6 +73,10 @@
         'tools/v8_gypfiles/v8.gyp:v8_maybe_snapshot',
         'tools/v8_gypfiles/v8.gyp:v8_libplatform',
       ],
+    },{
+      'libraries' : [
+         '/code/libv8.so'
+      ],
     }],
     [ 'node_use_v8_platform=="true"', {
       'defines': [
