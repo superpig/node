@@ -31,7 +31,7 @@
 
     # Some STL containers (e.g. std::vector) do not preserve ABI compatibility
     # between debug and non-debug mode.
-    'disable_glibcxx_debug': 1,
+    #'disable_glibcxx_debug': 1,
 
     # Don't use ICU data file (icudtl.dat) from V8, we use our own.
     'icu_use_data_file_flag%': 0,
@@ -161,8 +161,8 @@
             'ldflags': [ '-Wl,-bbigtoc' ],
           }],
           ['OS == "android"', {
-            'cflags': [ '-fPIE' ],
-            'ldflags': [ '-fPIE', '-pie' ]
+            'cflags': [ '-fPIC' ],
+            'ldflags': [ '-fPIC' ]
           }],
         ],
         'msvs_settings': {
@@ -221,8 +221,8 @@
             ],
           },],
           ['OS == "android"', {
-            'cflags': [ '-fPIE' ],
-            'ldflags': [ '-fPIE', '-pie' ]
+            'cflags': [ '-fPIC' ],
+            'ldflags': [ '-fPIC' ]
           }],
         ],
         'msvs_settings': {
@@ -437,6 +437,10 @@
           ['_toolset=="target"', {
             'defines': [ '_GLIBCXX_USE_C99_MATH' ],
             'libraries': [ '-llog' ],
+          }],
+          ['_toolset=="host"', {
+            'cflags': [ '-pthread' ],
+            'ldflags': [ '-pthread' ],
           }],
         ],
       }],
