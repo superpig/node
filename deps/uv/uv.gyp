@@ -9,6 +9,12 @@
         'shared_unix_defines': [
           '_LARGEFILE_SOURCE',
         ],
+      }, 'OS=="android" and target_arch in ("arm64","ia64")', {
+        # Android on API < 24 will miss function definitions for
+        #_FILE_OFFSET_BITS=64
+        'shared_unix_defines': [
+          '_LARGEFILE_SOURCE',
+        ],
       }, {
         'shared_unix_defines': [
           '_LARGEFILE_SOURCE',
