@@ -23,20 +23,14 @@ cd ./deps/v8
 python3 ./tools/node/fetch_deps.py $PWD
 
 gn_args=$(cat <<EOF
-is_debug = false
-v8_enable_backtrace = false
-v8_enable_slow_dchecks = true
-v8_optimized_debug = false
+target_cpu="$DEST_CPU_ARCH"
 v8_target_cpu = "$DEST_CPU_ARCH"
 target_os="android"
-target_cpu="$DEST_CPU_ARCH"
 is_component_build=false
-v8_android_log_stdout=true
-v8_use_external_startup_data=false
-v8_enable_debugging_features=false
-v8_enable_embedded_builtins=true
-is_clang=true
+use_debug_fission=false
 use_custom_libcxx=false
+v8_use_external_startup_data=false
+icu_use_data_file=false
 EOF
 )
 

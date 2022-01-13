@@ -4164,7 +4164,7 @@ v8_loadable_module("libmgcv8") {
     ":v8",
     ":v8_libbase",
     ":v8_libplatform",
-    ":v8_maybe_snapshot",
+    ":v8_snapshot",
   ]
 
   configs = [ ":internal_config" ]
