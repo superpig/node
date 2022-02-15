@@ -57,7 +57,7 @@ class DeserializerDelegate : public ValueDeserializer::Delegate {
       Environment* env,
       const std::vector<MessagePort*>& message_ports,
       const std::vector<Local<SharedArrayBuffer>>& shared_array_buffers,
-      const std::vector<v8::CompiledWasmModule>& wasm_modules
+      const std::vector<v8::CompiledWasmModule>& wasm_modules)
       : message_ports_(message_ports),
         shared_array_buffers_(shared_array_buffers),
         wasm_modules_(wasm_modules) {}
