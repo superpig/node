@@ -504,6 +504,7 @@
 
       'include_dirs': [
         'src',
+        'deps/v8/include',
         '<(SHARED_INTERMEDIATE_DIR)' # for node_natives.h
       ],
       'dependencies': [

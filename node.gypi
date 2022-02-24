@@ -68,6 +68,16 @@
     [ 'node_enable_d8=="true"', {
       'dependencies': [ 'tools/v8_gypfiles/d8.gyp:d8' ],
     }],
+    [ 'node_use_bundled_v8=="false" and target_arch=="arm" and OS=="android"', {
+      'libraries': [
+         '/code/libmgcv8.so',
+    ]
+    }],
+    [ 'node_use_bundled_v8=="false" and target_arch=="arm64" and OS=="android"', {
+      'libraries': [
+         '/code/libmgcv8.so',
+    ]
+    }],
     [ 'node_use_bundled_v8=="true"', {
       'dependencies': [
         'tools/v8_gypfiles/v8.gyp:v8_maybe_snapshot',
