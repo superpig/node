@@ -201,6 +201,11 @@ std::shared_ptr<KVStore> KVStore::Clone(v8::Isolate* isolate) const {
   for (uint32_t i = 0; i < keys_length; i++) {
     Local<Value> key = keys->Get(context, i).ToLocalChecked();
     CHECK(key->IsString());
+
+  if (Get(isolate, key.As<String>()).IsEmpty()) {
+    continue;
+  }
+
     copy->Set(isolate,
               key.As<String>(),
               Get(isolate, key.As<String>()).ToLocalChecked());
