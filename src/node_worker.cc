@@ -16,6 +16,7 @@
 #include <string>
 #include <vector>
 
+
 using node::kAllowedInEnvironment;
 using node::kDisallowedInEnvironment;
 using v8::Array;
@@ -460,10 +461,9 @@ Worker::~Worker() {
 
 void Worker::New(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
+ 
   Isolate* isolate = args.GetIsolate();
-
   CHECK(args.IsConstructCall());
-
   if (env->isolate_data()->platform() == nullptr) {
     THROW_ERR_MISSING_PLATFORM_FOR_WORKER(env);
     return;
@@ -482,7 +482,6 @@ void Worker::New(const FunctionCallbackInfo<Value>& args) {
         isolate, args[0]->ToString(env->context()).FromMaybe(Local<String>()));
     url.append(value.out(), value.length());
   }
-
   if (args[1]->IsNull()) {
     // Means worker.env = { ...process.env }.
     env_vars = env->env_vars()->Clone(isolate);
@@ -495,14 +494,12 @@ void Worker::New(const FunctionCallbackInfo<Value>& args) {
     // Env is shared.
     env_vars = env->env_vars();
   }
-
   if (args[1]->IsObject() || args[2]->IsArray()) {
     per_isolate_opts.reset(new PerIsolateOptions());
 
     HandleEnvOptions(per_isolate_opts->per_env, [&env_vars](const char* name) {
       return env_vars->Get(name).FromMaybe("");
     });
-
 #ifndef NODE_WITHOUT_NODE_OPTIONS
     MaybeLocal<String> maybe_node_opts =
         env_vars->Get(isolate, OneByteString(isolate, "NODE_OPTIONS"));
@@ -536,7 +533,6 @@ void Worker::New(const FunctionCallbackInfo<Value>& args) {
     }
 #endif
   }
-
   if (args[2]->IsArray()) {
     Local<Array> array = args[2].As<Array>();
     // The first argument is reserved for program name, but we don't need it
@@ -591,7 +587,6 @@ void Worker::New(const FunctionCallbackInfo<Value>& args) {
   } else {
     exec_argv_out = env->exec_argv();
   }
-
   Worker* worker = new Worker(env,
                               args.This(),
                               url,
@@ -663,20 +658,27 @@ void Worker::StartThread(const FunctionCallbackInfo<Value>& args) {
 }
 
 void Worker::StopThread(const FunctionCallbackInfo<Value>& args) {
+  fprintf(stderr, "workerlog===> worker stopThread start\n");
   Worker* w;
   ASSIGN_OR_RETURN_UNWRAP(&w, args.This());
-
+  fprintf(stderr, "workerlog===> worker stopThread after unwrap\n");
   Debug(w, "Worker %llu is getting stopped by parent", w->thread_id_);
   w->Exit(1);
+  fprintf(stderr, "workerlog===> worker stopThread end\n");
 }
 
 void Worker::Ref(const FunctionCallbackInfo<Value>& args) {
+  fprintf(stderr, "workerlog===> worker ref start\n");
   Worker* w;
   ASSIGN_OR_RETURN_UNWRAP(&w, args.This());
+  fprintf(stderr, "workerlog===> worker ref unwrap\n");
   if (!w->has_ref_) {
     w->has_ref_ = true;
+    fprintf(stderr, "workerlog===> worker do ref \n");
     w->env()->add_refs(1);
+    fprintf(stderr, "workerlog===> worker do ref end\n");
   }
+  fprintf(stderr, "workerlog===> worker ref end\n");
 }
 
 void Worker::Unref(const FunctionCallbackInfo<Value>& args) {
@@ -705,12 +707,16 @@ Local<Float64Array> Worker::GetResourceLimits(Isolate* isolate) const {
 void Worker::Exit(int code) {
   Mutex::ScopedLock lock(mutex_);
   Debug(this, "Worker %llu called Exit(%d)", thread_id_, code);
+  fprintf(stderr, "workerlog===> worker Exit start\n");
   if (env_ != nullptr) {
     exit_code_ = code;
+    fprintf(stderr, "workerlog===> worker stop env\n");
     Stop(env_);
+    fprintf(stderr, "workerlog===> worker stop env end\n");
   } else {
     stopped_ = true;
   }
+  fprintf(stderr, "workerlog===> worker exit end\n");
 }
 
 void Worker::MemoryInfo(MemoryTracker* tracker) const {

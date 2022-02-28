@@ -53,7 +53,10 @@ int EmitExit(Environment* env) {
             True(env->isolate()))
       .Check();
 
+
   Local<String> exit_code = env->exit_code_string();
+  Utf8Value code_str(env->isolate(), exit_code);
+  fprintf(stderr, "workerlog===>%s\n", *code_str);
   int code = process_object->Get(env->context(), exit_code)
                  .ToLocalChecked()
                  ->Int32Value(env->context())

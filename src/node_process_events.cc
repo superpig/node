@@ -24,10 +24,11 @@ MaybeLocal<Value> ProcessEmit(Environment* env,
                               const char* event,
                               Local<Value> message) {
   // Send message to enable debug in cluster workers
+  fprintf(stderr, "workerlog===> ProcessEmit start %s\n", event);
   Local<Object> process = env->process_object();
   Isolate* isolate = env->isolate();
   Local<Value> argv[] = {OneByteString(isolate, event), message};
-
+  fprintf(stderr, "workerlog===> ProcessEmit before callback\n");
   return MakeCallback(isolate, process, "emit", arraysize(argv), argv, {0, 0});
 }
 
