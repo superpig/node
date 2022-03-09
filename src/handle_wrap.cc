@@ -37,15 +37,10 @@ using v8::Value;
 
 void HandleWrap::Ref(const FunctionCallbackInfo<Value>& args) {
   HandleWrap* wrap;
-  fprintf(stderr, "workerlog===> handleWrap ref start\n");
   ASSIGN_OR_RETURN_UNWRAP(&wrap, args.Holder());
-  fprintf(stderr, "workerlog===> handleWrap after unwrap\n");
   if (IsAlive(wrap)) {
-    fprintf(stderr, "workerlog===> handleWrap alive\n");
     uv_ref(wrap->GetHandle());
-    fprintf(stderr, "workerlog===> handleWrap do reft\n"); 
   }
-  fprintf(stderr, "workerlog===> handleWrap ref end\n");
 }
 
 

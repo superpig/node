@@ -428,7 +428,7 @@ void Worker::JoinThread() {
     // Reset the parent port as we're closing it now anyway.
     object()->Set(env()->context(),
                   env()->message_port_string(),
-                  Undefined(env()->isolate())).Check();
+                  Undefined(env()->isolate()));
 
     Local<Value> args[] = {
         Integer::New(env()->isolate(), exit_code_),
