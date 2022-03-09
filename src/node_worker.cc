@@ -416,6 +416,8 @@ void Worker::CreateEnvMessagePort(Environment* env) {
 void Worker::JoinThread() {
   if (thread_joined_)
     return;
+
+  fprintf(stderr, "workerlog===> JoinThread start\n");
   CHECK_EQ(uv_thread_join(&tid_), 0);
   thread_joined_ = true;
 
@@ -426,10 +428,11 @@ void Worker::JoinThread() {
     Context::Scope context_scope(env()->context());
 
     // Reset the parent port as we're closing it now anyway.
+    fprintf(stderr, "workerlog===> JoinThread before set\n");
     object()->Set(env()->context(),
                   env()->message_port_string(),
                   Undefined(env()->isolate()));
-
+    fprintf(stderr, "workerlog===> JoinThread after set\n");
     Local<Value> args[] = {
         Integer::New(env()->isolate(), exit_code_),
         custom_error_ != nullptr
@@ -440,7 +443,7 @@ void Worker::JoinThread() {
                   .As<Value>()
             : Null(env()->isolate()).As<Value>(),
     };
-
+    fprintf(stderr, "workerlog===> JoinThread end\n");
     MakeCallback(env()->onexit_string(), arraysize(args), args);
   }
 
