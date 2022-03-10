@@ -20,7 +20,7 @@ function myconf() {
       --openssl-no-asm \
       --without-bundled-v8 \
       --experimental-enable-pointer-compression \
-      --without_v8_platform \
+      --without-v8-platform \
       --shared
 }
 
