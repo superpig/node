@@ -29,8 +29,14 @@ Mutex cli_options_mutex;
 std::shared_ptr<PerProcessOptions> cli_options{new PerProcessOptions()};
 }  // namespace per_process
 
+DebugOptions::DebugOptions() = default;
+DebugOptions::DebugOptions(const DebugOptions&) = default;
+DebugOptions::DebugOptions(DebugOptions&&) = default;
+DebugOptions& DebugOptions::operator=(const DebugOptions&) = default;
+DebugOptions& DebugOptions::operator=(DebugOptions&&) = default;
+
 void DebugOptions::CheckOptions(std::vector<std::string>* errors) {
-#if !NODE_USE_V8_PLATFORM && !HAVE_INSPECTOR
+#if 0
   if (inspector_enabled) {
     errors->push_back("Inspector is not available when Node is compiled "
                       "--without-v8-platform and --without-inspector.");
