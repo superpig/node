@@ -234,6 +234,14 @@ NODE_EXTERN void Init(int* argc,
                       int* exec_argc,
                       const char*** exec_argv);
 
+// Set up per-process state needed to run Node.js. This will consume arguments
+// from argv, fill exec_argv, and possibly add errors resulting from parsing
+// the arguments to `errors`. The return value is a suggested exit code for the
+// program; If it is 0, then initializing Node.js succeeded.
+NODE_EXTERN int InitializeNodeWithArgs(std::vector<std::string>* argv,
+                                       std::vector<std::string>* exec_argv,
+                                       std::vector<std::string>* errors);
+
 enum OptionEnvvarSettings {
   kAllowedInEnvironment,
   kDisallowedInEnvironment
@@ -383,6 +391,11 @@ NODE_EXTERN Environment* CreateEnvironment(IsolateData* isolate_data,
                                            const char* const* argv,
                                            int exec_argc,
                                            const char* const* exec_argv);
+
+NODE_EXTERN Environment* CreateEnv(IsolateData* isolate_data,
+                       Local<Context> context,
+                       const std::vector<std::string>& args,
+                       const std::vector<std::string>& exec_args);                                       
 
 NODE_EXTERN void LoadEnvironment(Environment* env);
 NODE_EXTERN void FreeEnvironment(Environment* env);

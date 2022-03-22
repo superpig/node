@@ -359,6 +359,24 @@ Environment* CreateEnvironment(IsolateData* isolate_data,
   return env;
 }
 
+Environment* CreateEnv(IsolateData* isolate_data,
+                       Local<Context> context,
+                       const std::vector<std::string>& args,
+                       const std::vector<std::string>& exec_args) {
+  Environment* env = new Environment(
+      isolate_data,
+      context,
+      args,
+      exec_args,
+      static_cast<Environment::Flags>(Environment::kIsMainThread |
+                                      Environment::kOwnsProcessState |
+                                      Environment::kOwnsInspector));
+  env->InitializeLibuv(per_process::v8_is_profiling);
+  if (env->RunBootstrapping().IsEmpty())
+    return nullptr;
+  return env;
+}
+
 void FreeEnvironment(Environment* env) {
   env->RunCleanup();
   delete env;
