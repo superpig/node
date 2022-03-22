@@ -393,7 +393,7 @@ NODE_EXTERN Environment* CreateEnvironment(IsolateData* isolate_data,
                                            const char* const* exec_argv);
 
 NODE_EXTERN Environment* CreateEnv(IsolateData* isolate_data,
-                       Local<Context> context,
+                       v8::Local<v8::Context> context,
                        const std::vector<std::string>& args,
                        const std::vector<std::string>& exec_args);                                       
 
