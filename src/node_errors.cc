@@ -153,12 +153,12 @@ void PrintStackTrace(Isolate* isolate, Local<StackTrace> stack) {
     }
 
     if (fn_name_s.length() == 0) {
-      fprintf(stderr, " workerlog===>   at %s:%i:%i\n", script_name, line_number, column);
+      fprintf(stderr, " workerlog===>   at %s:%i:%i\n", *script_name, line_number, column);
     } else {
       fprintf(stderr,
               " workerlog===>   at %s (%s:%i:%i)\n",
-              fn_name_s,
-              script_name,
+              *fn_name_s,
+              *script_name,
               line_number,
               column);
     }
@@ -396,20 +396,6 @@ static void ReportFatalException(Environment* env,
   fflush(stderr);
 }
 
-[[noreturn]] void FatalError(const char* location, const char* message) {
-  // to suppress compiler warning
-  fprintf(stderr, "MGC FatalError  %s\n", message);
-  if (InternalOnFatalError(location, message)) {
-    ABORT();
-  }
-}
-
-void OnFatalError(const char* location, const char* message) {
-  if (InternalOnFatalError(location, message)) {
-    ABORT();
-  }
-}
-
 bool InternalOnFatalError(const char* location, const char* message) {
   if (location) {
     FPrintF(stderr, "MGC FATAL ERROR: %s %s\n", location, message);
@@ -437,6 +423,20 @@ bool InternalOnFatalError(const char* location, const char* message) {
     return false;
   }
   return true;
+}
+
+[[noreturn]] void FatalError(const char* location, const char* message) {
+  // to suppress compiler warning
+  fprintf(stderr, "MGC FatalError  %s\n", message);
+  if (InternalOnFatalError(location, message)) {
+    ABORT();
+  }
+}
+
+void OnFatalError(const char* location, const char* message) {
+  if (InternalOnFatalError(location, message)) {
+    ABORT();
+  }
 }
 
 namespace errors {
