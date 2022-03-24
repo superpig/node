@@ -44,6 +44,7 @@ void EmitBeforeExit(Environment* env) {
 
 int EmitExit(Environment* env) {
   // process.emit('exit')
+  fprintf(stderr, "workerlog===> EmitExit start\n");
   HandleScope handle_scope(env->isolate());
   Context::Scope context_scope(env->context());
   Local<Object> process_object = env->process_object();

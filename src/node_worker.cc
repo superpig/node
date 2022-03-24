@@ -271,6 +271,10 @@ void Worker::Run() {
 
     DeleteFnPtr<Environment, FreeEnvironment> env_;
     auto cleanup_env = OnScopeLeave([&]() {
+      fprintf(stderr, "workerlog===> cleanup_env start\n");
+      if (!env_) {
+        fprintf(stderr, "workerlog===> cleanup_env return by env is null\n");
+      }
       if (!env_) return;
       env_->set_can_call_into_js(false);
       Isolate::DisallowJavascriptExecutionScope disallow_js(isolate_,
@@ -283,8 +287,10 @@ void Worker::Run() {
           stopped_ = true;
           this->env_ = nullptr;
         }
+        fprintf(stderr, "workerlog===> set_stopping start\n");
         env_->set_stopping(true);
         env_->stop_sub_worker_contexts();
+        fprintf(stderr, "workerlog===> RunCleanup start\n");
         env_->RunCleanup();
         RunAtExit(env_.get());
 
@@ -372,12 +378,15 @@ void Worker::Run() {
           more = uv_loop_alive(&data.loop_);
           if (more && !is_stopped()) continue;
 
+          fprintf(stderr, "workerlog===> EmitBeforeExit end\n");
           EmitBeforeExit(env_.get());
 
           // Emit `beforeExit` if the loop became alive either after emitting
           // event, or after running some callbacks.
           more = uv_loop_alive(&data.loop_);
         } while (more == true && !is_stopped());
+
+        fprintf(stderr, "workerlog===> performance_state start\n");
         env_->performance_state()->Mark(
             node::performance::NODE_PERFORMANCE_MILESTONE_LOOP_EXIT);
       }
@@ -386,12 +395,13 @@ void Worker::Run() {
     {
       int exit_code;
       bool stopped = is_stopped();
+      fprintf(stderr, "workerlog===> Exiting thread stop ? %d\n", stopped);
       if (!stopped)
         exit_code = EmitExit(env_.get());
       Mutex::ScopedLock lock(mutex_);
       if (exit_code_ == 0 && !stopped)
         exit_code_ = exit_code;
-
+      fprintf(stderr, "workerlog===> Exiting thread end  %d\n", exit_code_);
       Debug(this, "Exiting thread for worker %llu with exit code %d",
             thread_id_, exit_code_);
     }
@@ -444,6 +454,7 @@ void Worker::JoinThread() {
             : Null(env()->isolate()).As<Value>(),
     };
     fprintf(stderr, "workerlog===> JoinThread end\n");
+    
     MakeCallback(env()->onexit_string(), arraysize(args), args);
   }
 
@@ -618,6 +629,7 @@ void Worker::StartThread(const FunctionCallbackInfo<Value>& args) {
     // XXX: This could become a std::unique_ptr, but that makes at least
     // gcc 6.3 detect undefined behaviour when there shouldn't be any.
     // gcc 7+ handles this well.
+    fprintf(stderr, "workerlog===> uv_thread_create_ex  start\n");
     Worker* w = static_cast<Worker*>(arg);
     const uintptr_t stack_top = reinterpret_cast<uintptr_t>(&arg);
 
@@ -626,7 +638,7 @@ void Worker::StartThread(const FunctionCallbackInfo<Value>& args) {
     w->stack_base_ = stack_top - (kStackSize - kStackBufferSize);
 
     w->Run();
-
+    fprintf(stderr, "workerlog===> SetImmediateThreadsafe  start\n");
     Mutex::ScopedLock lock(w->mutex_);
     w->env()->SetImmediateThreadsafe(
         [w = std::unique_ptr<Worker>(w)](Environment* env) {

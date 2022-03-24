@@ -730,6 +730,11 @@ napi_status napi_create_buffer(napi_env env,
 
   CHECK_MAYBE_EMPTY(env, maybe, napi_generic_failure);
 
+  if (maybe.IsEmpty()) {
+    fprintf(stderr, "workerlog===> napi_create_buffer  maybe is empty\n");
+    return napi_generic_failure;
+  }
+
   v8::Local<v8::Object> buffer = maybe.ToLocalChecked();
 
   *result = v8impl::JsValueFromV8LocalValue(buffer);
@@ -785,6 +790,11 @@ napi_status napi_create_buffer_copy(napi_env env,
     static_cast<const char*>(data), length);
 
   CHECK_MAYBE_EMPTY(env, maybe, napi_generic_failure);
+
+  if (maybe.IsEmpty()) {
+    fprintf(stderr, "workerlog===> napi_create_buffer_copy  maybe is empty\n");
+    return napi_generic_failure;
+  }
 
   v8::Local<v8::Object> buffer = maybe.ToLocalChecked();
   *result = v8impl::JsValueFromV8LocalValue(buffer);

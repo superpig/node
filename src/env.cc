@@ -493,6 +493,7 @@ void Environment::ExitEnv() {
   set_can_call_into_js(false);
   set_stopping(true);
   isolate_->TerminateExecution();
+  fprintf(stderr, "workerlog===> ExitEnv  start\n");
   SetImmediateThreadsafe([](Environment* env) { uv_stop(env->event_loop()); });
 }
 
@@ -645,12 +646,14 @@ void Environment::RunAtExitCallbacks() {
   TraceEventScope trace_scope(TRACING_CATEGORY_NODE1(environment),
                               "AtExit", this);
   for (ExitCallback at_exit : at_exit_functions_) {
+    fprintf(stderr, "workerlog===> RunAtExitCallbacks\n");
     at_exit.cb_(at_exit.arg_);
   }
   at_exit_functions_.clear();
 }
 
 void Environment::AtExit(void (*cb)(void* arg), void* arg) {
+  fprintf(stderr, "workerlog===> AtExit11111\n");
   at_exit_functions_.push_front(ExitCallback{cb, arg});
 }
 
@@ -672,15 +675,14 @@ void Environment::RunAndClearNativeImmediates(bool only_refed) {
   TraceEventScope trace_scope(TRACING_CATEGORY_NODE1(environment),
                               "RunAndClearNativeImmediates", this);
   size_t ref_count = 0;
-
   // Handle interrupts first. These functions are not allowed to throw
   // exceptions, so we do not need to handle that.
   RunAndClearInterrupts();
-
   // It is safe to check .size() first, because there is a causal relationship
   // between pushes to the threadsafe and this function being called.
   // For the common case, it's worth checking the size first before establishing
   // a mutex lock.
+  fprintf(stderr, "workerlog===> native_immediates_threadsafe_ size  %zu\n", native_immediates_threadsafe_.size());
   if (native_immediates_threadsafe_.size() > 0) {
     Mutex::ScopedLock lock(native_immediates_threadsafe_mutex_);
     native_immediates_.ConcatMove(std::move(native_immediates_threadsafe_));
@@ -822,19 +824,20 @@ void Environment::CheckImmediate(uv_check_t* handle) {
 
   HandleScope scope(env->isolate());
   Context::Scope context_scope(env->context());
-
   env->RunAndClearNativeImmediates();
+  fprintf(stderr, "workerlog===> RunAndClearNativeImmediates end  info count = %u\n", env->immediate_info()->count());
 
   if (env->immediate_info()->count() == 0 || !env->can_call_into_js())
     return;
 
   do {
+    
     MakeCallback(env->isolate(),
                  env->process_object(),
                  env->immediate_callback_function(),
                  0,
                  nullptr,
-                 {0, 0}).ToLocalChecked();
+                 {0, 0});
   } while (env->immediate_info()->has_outstanding() && env->can_call_into_js());
 
   if (env->immediate_info()->ref_count() == 0)

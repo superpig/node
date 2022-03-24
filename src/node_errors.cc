@@ -141,10 +141,10 @@ void PrintStackTrace(Isolate* isolate, Local<StackTrace> stack) {
 
     if (stack_frame->IsEval()) {
       if (stack_frame->GetScriptId() == Message::kNoScriptIdInfo) {
-        FPrintF(stderr, "    at [eval]:%i:%i\n", line_number, column);
+        fprintf(stderr, "  workerlog===>  at [eval]:%i:%i\n", line_number, column);
       } else {
-        FPrintF(stderr,
-                "    at [eval] (%s:%i:%i)\n",
+        fprintf(stderr,
+                "  workerlog===>  at [eval] (%s:%i:%i)\n",
                 *script_name,
                 line_number,
                 column);
@@ -153,10 +153,10 @@ void PrintStackTrace(Isolate* isolate, Local<StackTrace> stack) {
     }
 
     if (fn_name_s.length() == 0) {
-      FPrintF(stderr, "    at %s:%i:%i\n", script_name, line_number, column);
+      fprintf(stderr, " workerlog===>   at %s:%i:%i\n", script_name, line_number, column);
     } else {
-      FPrintF(stderr,
-              "    at %s (%s:%i:%i)\n",
+      fprintf(stderr,
+              " workerlog===>   at %s (%s:%i:%i)\n",
               fn_name_s,
               script_name,
               line_number,
@@ -397,16 +397,24 @@ static void ReportFatalException(Environment* env,
 }
 
 [[noreturn]] void FatalError(const char* location, const char* message) {
-  OnFatalError(location, message);
   // to suppress compiler warning
-  ABORT();
+  fprintf(stderr, "MGC FatalError  %s\n", message);
+  if (InternalOnFatalError(location, message)) {
+    ABORT();
+  }
 }
 
 void OnFatalError(const char* location, const char* message) {
+  if (InternalOnFatalError(location, message)) {
+    ABORT();
+  }
+}
+
+bool InternalOnFatalError(const char* location, const char* message) {
   if (location) {
-    FPrintF(stderr, "FATAL ERROR: %s %s\n", location, message);
+    FPrintF(stderr, "MGC FATAL ERROR: %s %s\n", location, message);
   } else {
-    FPrintF(stderr, "FATAL ERROR: %s\n", message);
+    FPrintF(stderr, "MGC FATAL ERROR: %s\n", message);
   }
 
   Isolate* isolate = Isolate::GetCurrent();
@@ -423,7 +431,12 @@ void OnFatalError(const char* location, const char* message) {
   }
 
   fflush(stderr);
-  ABORT();
+
+  if (std::strcmp(message, "Empty MaybeLocal.") == 0 || std::strcmp(message, "Maybe value is Nothing.") == 0) {
+    fprintf(stderr, "workerlog===> OnFatalError hit\n");
+    return false;
+  }
+  return true;
 }
 
 namespace errors {

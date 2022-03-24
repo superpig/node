@@ -66,10 +66,11 @@ InternalCallbackScope::InternalCallbackScope(Environment* env,
     async_context_.async_id, async_context_.trigger_async_id, object);
 
   pushed_ids_ = true;
-
+  fprintf(stderr, "workerlog===> InternalCallbackScope start\n");
   if (asyncContext.async_id != 0 && !skip_hooks_) {
     // No need to check a return value because the application will exit if
     // an exception occurs.
+    fprintf(stderr, "workerlog===> EmitBefore start\n");
     AsyncWrap::EmitBefore(env, asyncContext.async_id);
   }
 }
