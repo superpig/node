@@ -682,8 +682,8 @@ void Environment::RunAndClearNativeImmediates(bool only_refed) {
   // between pushes to the threadsafe and this function being called.
   // For the common case, it's worth checking the size first before establishing
   // a mutex lock.
-  fprintf(stderr, "workerlog===> native_immediates_threadsafe_ size  %zu\n", native_immediates_threadsafe_.size());
   if (native_immediates_threadsafe_.size() > 0) {
+    fprintf(stderr, "workerlog===> native_immediates_threadsafe_ size  %zu\n", native_immediates_threadsafe_.size());
     Mutex::ScopedLock lock(native_immediates_threadsafe_mutex_);
     native_immediates_.ConcatMove(std::move(native_immediates_threadsafe_));
   }
@@ -825,11 +825,10 @@ void Environment::CheckImmediate(uv_check_t* handle) {
   HandleScope scope(env->isolate());
   Context::Scope context_scope(env->context());
   env->RunAndClearNativeImmediates();
-  fprintf(stderr, "workerlog===> RunAndClearNativeImmediates end  info count = %u\n", env->immediate_info()->count());
 
   if (env->immediate_info()->count() == 0 || !env->can_call_into_js())
     return;
-
+  fprintf(stderr, "workerlog===> RunAndClearNativeImmediates end  info count = %u\n", env->immediate_info()->count());
   do {
     
     MakeCallback(env->isolate(),
