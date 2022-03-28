@@ -9,6 +9,7 @@
 #include "node_process.h"
 #include "node_v8_platform-inl.h"
 #include "util-inl.h"
+#include "mgc_oom_observer.h"
 
 namespace node {
 
@@ -425,9 +426,9 @@ void PrintErrorString(const char* format, ...) {
 
 void OnFatalError(const char* location, const char* message) {
   if (location) {
-    PrintErrorString("FATAL ERROR: %s %s\n", location, message);
+    PrintErrorString("MGC FATAL ERROR: %s %s\n", location, message);
   } else {
-    PrintErrorString("FATAL ERROR: %s\n", message);
+    PrintErrorString("MGC FATAL ERROR: %s\n", message);
   }
 #ifdef NODE_REPORT
   Isolate* isolate = Isolate::GetCurrent();
@@ -438,7 +439,12 @@ void OnFatalError(const char* location, const char* message) {
   }
 #endif  // NODE_REPORT
   fflush(stderr);
-  ABORT();
+  if (strstr(message, "out of memory") != NULL) {
+    mgcoom::mgcNotifyOOM();    
+  } else {
+    ABORT();
+  }
+//ABORT();
 }
 
 namespace errors {
