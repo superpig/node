@@ -8,6 +8,7 @@
 #include "node_process.h"
 #include "node_v8_platform-inl.h"
 #include "util-inl.h"
+#include "mgc_oom_observer.h"
 
 namespace node {
 
