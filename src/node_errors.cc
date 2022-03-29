@@ -423,8 +423,8 @@ bool InternalOnFatalError(const char* location, const char* message) {
     fprintf(stderr, "workerlog===> OnFatalError hit\n");
     return false;
   } else if (strstr(message, "out of memory") != NULL) {
-    mgcoom::mgcNotifyOOM();    
-    return false;
+    bool consume = mgcoom::mgcNotifyOOM();
+    return !consume;
   }
   return true;
 }
