@@ -106,10 +106,6 @@ const int kApiTaggedSize = kApiInt32Size;
 const int kApiTaggedSize = kApiSystemPointerSize;
 #endif
 
-constexpr bool PointerCompressionIsEnabled() {
-  return kApiTaggedSize != kApiSystemPointerSize;
-}
-
 #ifdef V8_31BIT_SMIS_ON_64BIT_ARCH
 using PlatformSmiTagging = SmiTagging<kApiInt32Size>;
 #else
@@ -164,10 +160,10 @@ class Internals {
       kNumIsolateDataSlots * kApiSystemPointerSize;
   static const int kExternalMemoryLimitOffset =
       kExternalMemoryOffset + kApiInt64Size;
-  static const int kExternalMemoryLowSinceMarkCompactOffset =
+  static const int kExternalMemoryAtLastMarkCompactOffset =
       kExternalMemoryLimitOffset + kApiInt64Size;
   static const int kIsolateFastCCallCallerFpOffset =
-      kExternalMemoryLowSinceMarkCompactOffset + kApiInt64Size;
+      kExternalMemoryAtLastMarkCompactOffset + kApiInt64Size;
   static const int kIsolateFastCCallCallerPcOffset =
       kIsolateFastCCallCallerFpOffset + kApiSystemPointerSize;
   static const int kIsolateStackGuardOffset =

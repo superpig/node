@@ -70,12 +70,12 @@
     }],
     [ 'node_use_bundled_v8=="false" and target_arch=="arm" and OS=="android"', {
       'libraries': [
-         '<!(pwd)/deps/v8/out.gn/android-arm/libmgcv8.so',
+         '/code/libv8.mt.so',
     ]
     }],
     [ 'node_use_bundled_v8=="false" and target_arch=="arm64" and OS=="android"', {
       'libraries': [
-         '<!(pwd)/deps/v8/out.gn/android-arm64/libmgcv8.so',
+         '/code/libv8.mt.so',
     ]
     }],
     [ 'node_use_bundled_v8=="true"', {
