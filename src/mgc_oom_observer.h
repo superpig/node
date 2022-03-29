@@ -8,7 +8,7 @@ namespace mgcoom {
   };
 
   void addOOMObserver(mgcoomobserver* mgc);
-  void mgcNotifyOOM();
+  bool mgcNotifyOOM();
 }
 
 #endif //MGC_OOM_OBSERVER_H

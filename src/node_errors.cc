@@ -418,13 +418,7 @@ void PrintErrorString(const char* format, ...) {
   va_end(ap);
 }
 
-[[noreturn]] void FatalError(const char* location, const char* message) {
-  OnFatalError(location, message);
-  // to suppress compiler warning
-  ABORT();
-}
-
-void OnFatalError(const char* location, const char* message) {
+bool InternalOnFatalError(const char* location, const char* message) {
   if (location) {
     PrintErrorString("MGC FATAL ERROR: %s %s\n", location, message);
   } else {
@@ -440,11 +434,23 @@ void OnFatalError(const char* location, const char* message) {
 #endif  // NODE_REPORT
   fflush(stderr);
   if (strstr(message, "out of memory") != NULL) {
-    mgcoom::mgcNotifyOOM();    
-  } else {
+    bool mgcConsume = mgcoom::mgcNotifyOOM();
+    return !mgcConsume;
+  }
+  return true;
+}
+
+[[noreturn]] void FatalError(const char* location, const char* message) {
+  if (InternalOnFatalError(location, message)) {
+    // to suppress compiler warning
     ABORT();
   }
-//ABORT();
+}
+
+void OnFatalError(const char* location, const char* message) {
+  if (InternalOnFatalError(location, message)) {
+    ABORT();
+  }
 }
 
 namespace errors {
