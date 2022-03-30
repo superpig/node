@@ -828,7 +828,6 @@ void Environment::CheckImmediate(uv_check_t* handle) {
 
   if (env->immediate_info()->count() == 0 || !env->can_call_into_js())
     return;
-  fprintf(stderr, "workerlog===> RunAndClearNativeImmediates end  info count = %u\n", env->immediate_info()->count());
   do {
     
     MakeCallback(env->isolate(),
