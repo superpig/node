@@ -493,7 +493,6 @@ void Environment::ExitEnv() {
   set_can_call_into_js(false);
   set_stopping(true);
   isolate_->TerminateExecution();
-  fprintf(stderr, "workerlog===> ExitEnv  start\n");
   SetImmediateThreadsafe([](Environment* env) { uv_stop(env->event_loop()); });
 }
 
@@ -646,14 +645,12 @@ void Environment::RunAtExitCallbacks() {
   TraceEventScope trace_scope(TRACING_CATEGORY_NODE1(environment),
                               "AtExit", this);
   for (ExitCallback at_exit : at_exit_functions_) {
-    fprintf(stderr, "workerlog===> RunAtExitCallbacks\n");
     at_exit.cb_(at_exit.arg_);
   }
   at_exit_functions_.clear();
 }
 
 void Environment::AtExit(void (*cb)(void* arg), void* arg) {
-  fprintf(stderr, "workerlog===> AtExit11111\n");
   at_exit_functions_.push_front(ExitCallback{cb, arg});
 }
 
@@ -683,7 +680,6 @@ void Environment::RunAndClearNativeImmediates(bool only_refed) {
   // For the common case, it's worth checking the size first before establishing
   // a mutex lock.
   if (native_immediates_threadsafe_.size() > 0) {
-    fprintf(stderr, "workerlog===> native_immediates_threadsafe_ size  %zu\n", native_immediates_threadsafe_.size());
     Mutex::ScopedLock lock(native_immediates_threadsafe_mutex_);
     native_immediates_.ConcatMove(std::move(native_immediates_threadsafe_));
   }

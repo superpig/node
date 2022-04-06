@@ -378,7 +378,6 @@ void Worker::Run() {
           more = uv_loop_alive(&data.loop_);
           if (more && !is_stopped()) continue;
 
-          fprintf(stderr, "workerlog===> EmitBeforeExit end\n");
           EmitBeforeExit(env_.get());
 
           // Emit `beforeExit` if the loop became alive either after emitting

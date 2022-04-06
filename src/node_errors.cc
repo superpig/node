@@ -420,7 +420,6 @@ bool InternalOnFatalError(const char* location, const char* message) {
   fflush(stderr);
 
   if (std::strcmp(message, "Empty MaybeLocal.") == 0 || std::strcmp(message, "Maybe value is Nothing.") == 0) {
-    fprintf(stderr, "workerlog===> OnFatalError hit\n");
     return false;
   } else if (strstr(message, "out of memory") != NULL) {
     bool consume = mgcoom::mgcNotifyOOM();
