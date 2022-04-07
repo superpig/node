@@ -434,7 +434,7 @@ bool InternalOnFatalError(const char* location, const char* message) {
 #endif  // NODE_REPORT
   fflush(stderr);
   if (strstr(message, "out of memory") != NULL) {
-    bool mgcConsume = mgcoom::mgcNotifyOOM();
+    bool mgcConsume = mgcoom::mgcNotifyOOM(1);
     return !mgcConsume;
   }
   return true;

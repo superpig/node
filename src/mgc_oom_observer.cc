@@ -8,9 +8,9 @@ void addOOMObserver(mgcoomobserver* mgc) {
     nodemgc = mgc;
 }
 
-bool mgcNotifyOOM() {
+bool mgcNotifyOOM(int type) {
   if (nodemgc != nullptr) {
-    nodemgc->notifyOOM();
+    nodemgc->notifyOOM(type);
     nodemgc = nullptr;
     return true;
   }

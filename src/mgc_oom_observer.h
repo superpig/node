@@ -4,11 +4,11 @@
 namespace mgcoom {
   class mgcoomobserver {
     public:
-    virtual void notifyOOM();
+    virtual void notifyOOM(int type);
   };
 
   void addOOMObserver(mgcoomobserver* mgc);
-  bool mgcNotifyOOM();
+  bool mgcNotifyOOM(int type);
 }
 
 #endif //MGC_OOM_OBSERVER_H
