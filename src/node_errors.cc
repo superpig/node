@@ -948,6 +948,10 @@ void TriggerUncaughtException(Isolate* isolate,
   if (!fatal_exception_function->IsFunction()) {
     ReportFatalException(
         env, error, message, EnhanceFatalException::kDontEnhance);
+    bool mgcConsume6 = mgcoom::mgcNotifyOOM(3);
+    if (mgcConsume6) {
+      return;
+    }
     env->Exit(6);
     return;
   }
@@ -990,6 +994,11 @@ void TriggerUncaughtException(Isolate* isolate,
 
   // Now we are certain that the exception is fatal.
   ReportFatalException(env, error, message, EnhanceFatalException::kEnhance);
+
+  bool mgcConsumeExit = mgcoom::mgcNotifyOOM(3);
+  if (mgcConsumeExit) {
+    return;
+  }
 
   // If the global uncaught exception handler sets process.exitCode,
   // exit with that code. Otherwise, exit with 1.
