@@ -1,12 +1,36 @@
 #!/usr/bin/env bash
 
-# This script assumes that all the right environment variables
-# (CC, LD, STRIP, ...) areset.
-
 set -eu -o pipefail
 
 scriptdir="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 cd $scriptdir/..
+
+NDK=$1
+
+DEST_CPU_ARCH='arm'
+API_LEVEL=21
+BUILD_HOST_TAG='linux-x86_64'
+TOOLCHAIN_DIR=$NDK/toolchains/llvm/prebuilt/$BUILD_HOST_TAG/
+
+if [[ ! -d "$NDK" ]]; then
+  echo "Android NDK directory '$NDK' invalid"
+  exit 1
+fi
+
+if [[ ! -d "$TOOLCHAIN_DIR" ]]; then
+  echo "Toolchain directory '$TOOLCHAIN_DIR' invalid"
+  exit 1
+fi
+
+# The naming of these isn't very consistent, as some tools start with arm,
+# others with arm7a.
+export AR=$TOOLCHAIN_DIR/bin/arm-linux-androideabi-ar
+export CC=$TOOLCHAIN_DIR/bin/armv7a-linux-androideabi$API_LEVEL-clang
+export CXX=$TOOLCHAIN_DIR/bin/armv7a-linux-androideabi$API_LEVEL-clang++
+export LD=$TOOLCHAIN_DIR/bin/arm-linux-androideabi-ld
+export LINK=$TOOLCHAIN_DIR/bin/armv7a-linux-androideabi$API_LEVEL-clang++
+export RANLIB=$TOOLCHAIN_DIR/bin/arm-linux-androideabi-ranlib
+export STRIP=$TOOLCHAIN_DIR/bin/arm-linux-androideabi-strip
 
 export GYP_DEFINES="OS=android clang=1"
 
@@ -19,8 +43,21 @@ function myconf() {
       --without-intl \
       --openssl-no-asm \
       --without-bundled-v8 \
-      --experimental-enable-pointer-compression \
-      --shared
+      --shared \
+      --shared-zlib
 }
 
-myconf && make
+if [ -z ${2+x} ]; then
+  myconf && ninja -d keeprsp -C out/Release/ libnode &&
+  find out/Release -name "*.a" -exec rm {} \; &&
+  sed -i 's/rcsT/rcs/' out/Release/build.ninja &&
+  ninja -d keeprsp -C out/Release/ libnode &&
+  cd out/Release &&
+  $AR rcs -o libnode.a  $(grep -oz 'obj\/\S*\.o\s' lib/libnode.so.rsp) &&
+  cd $scriptdir/..
+  x=$scriptdir/compiled/armeabi-v7a/
+  mkdir -p $x
+  find out/Release -name "*.a" -exec cp {} $x \;
+else
+  eval $2
+fi
